@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dsh-kb"
-version = "0.10.0"
+version = "0.10.1"
 description = "Compatibility shim: the project was renamed to scheda. Installs scheda and keeps `import dsh_kb` working."
 readme = "README.md"
 requires-python = ">=3.10"
