@@ -110,9 +110,24 @@
 | **dsh-mnemon-source-kb** | DSH 宿主插件（mnemon Source，真代码） | MIT |
 | *(计划)* scheda-enterprise | 企业治理层：auth / audit-sink / zone-policy | 商业 |
 
-## 七、当前缺口（架构层面，不是 bug）
+## 七、扩展点与企业能力（0.10.0 起）
 
-1. **没有进程内扩展点**：`entry_points` 零命中。企业版要么 fork（必然漂移），要么先加 `auth_provider` / `audit_sink` / `zone_policy` 三个钩子。
-2. **`cli.py` 是巨石**（1800 行，43 个顶层函数）：参数解析 + push 事务 + import 适配 + doctor 探针混在一起，可按职责无损切到 `commands/`。
-3. **无增量索引**：每次全量重建（33 MB 约 3 s）。库再大一个量级需要按 mtime 增量。
-4. **无多用户/鉴权**：`web` 默认只绑 `127.0.0.1` 就是承认这一点——它没有认证。
+| 钩子 | 用在哪 | 默认 |
+|---|---|---|
+| `AuthProvider.identify` | 审计记录里的 `actor` | `"local"` |
+| `AuditSink.emit` | 审计转发到 SIEM（本地文件仍写） | 只写本地 |
+| `ZonePolicy.allow` | mirror / index / query 的逐路径决定 | 交回 `config.py` |
+
+入口是 `scheda.plugins` entry-point group；插件失败只记一行 stderr，内置实现继续工作。详见 `plugins.md`。
+
+**多用户与鉴权**在 `auth.py`，**默认关闭**：没有 `users.json` 时行为与 0.9.0 一致。开启后 `web` 走登录/会话/角色/zone 白名单；`--auth` 但无用户库会拒绝启动（不做"看似有鉴权"的服务）。
+
+**增量索引**默认开启：`[mtime_ns, size]` 未变的页保留其 chunk，变化页重切，消失页删除；结果与全量重建做计数与 FTS5 统计校验，描述不了的状态（分块签名变化、外来索引文件、journal、损坏 state）一律回退全量。`index --full` 是显式回退开关。
+
+**`cli.py` 已拆分**：1800 → 305 行，19 个命令进 `commands/`，帮助文本逐字节不变（`test_commands.py` 守着注册表与解析器同步）。
+
+### 仍然存在的边界（取舍，不是缺口）
+
+1. 插件是**进程内**的：装插件要能改 Python 环境；交叉编译场景仍需随包分发。
+2. 鉴权只覆盖 web；MCP 侧的 token 映射还没做（`AuthProvider` 的 context 已预留 `transport`）。
+3. 增量索引以「页」为单位：单页内改一行仍重切整页（`chunk_id` 内容寻址，没有更细粒度）。

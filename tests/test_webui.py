@@ -426,7 +426,8 @@ class TestServeContract(WebUITestCase):
         err = io.StringIO()
         with mock.patch.object(webui, "make_server", return_value=stub), \
                 contextlib.redirect_stderr(err):
-            self.assertIsNone(webui.serve(self.cfg, "127.0.0.1", 0, quiet=True))
+            # serve() 返回 bool：True = 正常退出（Ctrl-C），False = 拒绝启动（--auth 无用户库）
+            self.assertIsNot(webui.serve(self.cfg, "127.0.0.1", 0, quiet=True), False)
         self.assertTrue(stub.closed)
         self.assertEqual(err.getvalue(), "")           # --quiet prints no banner
 

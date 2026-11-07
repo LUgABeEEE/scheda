@@ -239,6 +239,13 @@ class Config:
     max_read_lines: int = 200
     #: Vector store location / model / dimension (see :class:`RagConfig`).
     rag: RagConfig = field(default_factory=RagConfig)
+    #: 关掉插件发现（故障排查 / 复现「无插件」行为）。
+    #: 来源：``SCHEDA_PLUGINS``（``off``/``0``/``false``/``no`` 为关）或
+    #: ``config.json`` 的同名字段。默认 ``True`` —— 装了插件就该生效，否则
+    #: 企业治理层要额外改代码才能打开，等于又回到 fork。
+    #: 关掉时 :mod:`scheda.service` 完全不调用 ``importlib.metadata``，
+    #: 行为与本模块引入插件之前**逐字节一致**。
+    plugins_enabled: bool = True
     #: config.json 里存在、但本版本不认识的键。
     #: 配置文件多一个键不该让整个 CLI 崩掉（旧版本读新配置、用户加注释键都会遇到），
     #: 让 `doctor` 把它报出来，比静默忽略或直接 TypeError 都好。
@@ -250,6 +257,13 @@ class Config:
         # :func:`normalise_chunk_strategy`），所以读到的永远是**生效中**的值。
         object.__setattr__(
             self, "chunk_strategy", normalise_chunk_strategy(self.chunk_strategy)
+        )
+        # 开关同样在这里归一化：手写的 ``"plugins_enabled": "off"``（字符串）
+        # 若直接进 dataclass，``bool("off")`` 是 True —— 「写 off 却开着」正是
+        # 一个关不掉的开关该有的样子，必须在构造层就挡掉。
+        enabled = self.plugins_enabled
+        object.__setattr__(
+            self, "plugins_enabled", _env_flag(enabled) if isinstance(enabled, str) else bool(enabled)
         )
 
     # ---- derived paths -------------------------------------------------
@@ -486,6 +500,10 @@ def load_config(**overrides) -> Config:
         ("mtime_tolerance", "MTIME_TOLERANCE", float),
         ("chunk_lines", "CHUNK_LINES", int),
         ("chunk_max_chars", "CHUNK_MAX_CHARS", int),
+        # 插件总开关：环境变量覆盖 config.json，与其余项同一优先级规则。
+        # 空串按「未设置」处理（``_env`` 的约定），所以 ``SCHEDA_PLUGINS=``
+        # 不会把开关意外关掉。
+        ("plugins_enabled", "PLUGINS", _env_flag),
     ):
         if _env(env):
             try:

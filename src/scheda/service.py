@@ -8,11 +8,12 @@ and the tool results cannot drift apart.
 """
 from __future__ import annotations
 
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-from . import audit
+from . import audit, plugins
 from .config import INCOMING_DIR, Config, source_available
 from .index import IndexStats, build, index_age, read, search, stats
 from .mirror import (
@@ -51,6 +52,149 @@ def log_event(cfg: Config, level: str, event: str, msg: str, **extra) -> None:
     audit.log_event(cfg, level, event, msg, **extra)
 
 
+#: Marker appended to a search payload's ``note`` when a :class:`ZonePolicy`
+#: removed one or more hits.  Enterprise consumers need to tell "nothing matched"
+#: from "matches were withheld" — those are different answers to the user.
+DENIED_NOTE = "denied by policy"
+
+
+def _plugins(cfg: Config) -> plugins.Plugins:
+    """The extension bundle in force for this call.
+
+    Two independent off switches, same meaning: ``Config.plugins_enabled`` (this
+    deployment) and ``SCHEDA_PLUGINS=off`` (this process, for troubleshooting).
+    Either one off ⇒ :data:`scheda.plugins.EMPTY`, i.e. exactly the pre-plugin
+    code path — no ``importlib.metadata`` call, no dict rebuilding, no filtering.
+    """
+    if not getattr(cfg, "plugins_enabled", True):
+        return plugins.EMPTY
+    return plugins.load()
+
+
+def _plugin_failed(kind: str, exc: BaseException) -> None:
+    """A loaded plugin raised at call time: report, then fall back to built-in.
+
+    Import-time failures are reported by :mod:`scheda.plugins`; this covers the
+    other half — a sink that throws while emitting, a policy that throws while
+    deciding.  Same contract: one stderr line, never an exception.
+    """
+    try:
+        sys.stderr.write(f"scheda: plugin {kind} failed: {type(exc).__name__}: {exc}\n")
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001 - nowhere left to report
+        pass
+
+
+def _audit_record(cfg: Config, action: str, **fields) -> dict:
+    """Build the fixed-schema audit record exactly as :mod:`scheda.audit` does.
+
+    Why duplicated instead of calling ``audit.audit_event``: the plugin sink
+    must receive **the same dict** that is written to the file — same keys, same
+    order, same timestamp.  Two calls would each generate their own ``ts``.  So
+    the record is assembled once here, handed to the sink, then written.
+
+    Drift guard: ``tests/test_plugins.py::TestDefaultPathIsUnchanged`` pins the
+    line produced by this function to the line produced by
+    ``audit.audit_event`` under a frozen clock.  If audit.py's schema changes,
+    that test fails instead of the plugin record silently diverging.
+    """
+    query = audit._one_line(fields.pop("query", "")).strip()
+    if len(query) > audit.MAX_QUERY_CHARS:
+        query = query[:audit.MAX_QUERY_CHARS]
+    transport = str(fields.pop("transport", "") or audit.DEFAULT_TRANSPORT).strip().lower()
+    if transport not in audit.TRANSPORTS:
+        transport = audit.DEFAULT_TRANSPORT
+    return {
+        "ts": audit._now(),
+        "actor": audit._one_line(fields.pop("actor", "") or audit.DEFAULT_ACTOR).strip(),
+        "action": audit._normalise_action(action),
+        "zone": audit._one_line(fields.pop("zone", "")).strip(),
+        "query": query,
+        "path": audit._relative_path(cfg, fields.pop("path", "")),
+        "hits": audit._hits(fields.pop("hits", None)),
+        "lines": audit._hits(fields.pop("lines", None)),
+        "transport": transport,
+    }
+
+
+def _write_audit_record(cfg: Config, record: dict) -> None:
+    """Append one record to ``audit.jsonl`` with the module's rotation rules.
+
+    Delegates to the same writer :func:`scheda.audit.audit_event` uses, so
+    rotation, ``O_APPEND`` atomicity and the "never raise" promise are inherited
+    rather than reimplemented.
+    """
+    max_bytes, backups = audit.rotation_settings(cfg)
+    audit._write_jsonl(audit.audit_path(cfg), record, max_bytes=max_bytes, backups=backups)
+
+
+def _identify(auth, action: str, fields: dict) -> str:
+    """Ask an :class:`AuthProvider` who is calling; ``""`` means "no opinion"."""
+    context = {
+        "transport": str(fields.get("transport") or audit.DEFAULT_TRANSPORT).strip().lower(),
+        "path": str(fields.get("path") or ""),
+        "action": str(action or ""),
+    }
+    try:
+        name = auth.identify(context)
+    except Exception as exc:  # noqa: BLE001 - identity lookup must not fail a read
+        _plugin_failed("auth", exc)
+        return ""
+    return name.strip() if isinstance(name, str) else ""
+
+
+def _denied(policy, rel: str) -> bool:
+    """True only when a :class:`ZonePolicy` explicitly answers ``False``.
+
+    ``None`` means "hand it back to the built-in logic", which is what makes a
+    policy able to cover one prefix and ignore everything else.  Any other
+    return value (including a truthy object) is treated as no opinion — the
+    documented contract, and the safe direction: a plugin bug must not silently
+    hide documents.
+    """
+    if policy is None:
+        return False
+    try:
+        return policy.allow(str(rel), "query") is False
+    except Exception as exc:  # noqa: BLE001 - a broken policy must not break search
+        _plugin_failed("zone", exc)
+        return False
+
+
+def _apply_zone_policy(policy, hits) -> tuple[list, bool]:
+    """Split hits into ``(kept, denied_any)``.  No policy ⇒ a plain copy."""
+    if policy is None:
+        return list(hits), False
+    kept = [hit for hit in hits if not _denied(policy, getattr(hit, "path", ""))]
+    return kept, len(kept) != len(hits)
+
+
+def _note_with_denial(note: str, denied: bool) -> str:
+    """Append the denial marker; the no-plugin path returns ``note`` untouched."""
+    if not denied:
+        return note
+    return " | ".join(part for part in (note, DENIED_NOTE) if part)
+
+
+def _sweep_denied(payload: dict, policy) -> dict:
+    """Re-apply the policy after query expansion.
+
+    Expansion (synonyms / rewrite / page rerank) searches again and merges the
+    results, so it can re-introduce a path the policy refuses.  One sweep at the
+    end keeps the invariant "no denied path leaves this function" without
+    threading the policy through every merge.
+    """
+    rows = payload.get("hits", [])
+    kept = [row for row in rows if not _denied(policy, row.get("path", ""))]
+    if len(kept) == len(rows):
+        return payload
+    payload["hits"] = kept
+    payload["count"] = len(kept)
+    payload["ok"] = bool(kept)
+    payload["note"] = _note_with_denial(payload.get("note", ""), True)
+    return payload
+
+
 def audit_event(cfg: Config, action: str, **fields) -> None:
     """Append one audit record to ``<home>/logs/audit.jsonl``.
 
@@ -59,8 +203,32 @@ def audit_event(cfg: Config, action: str, **fields) -> None:
     characters) / ``path`` / ``hits`` / ``transport``.  Page bodies and
     credentials never enter this file, so the audit trail cannot become a side
     channel around the privacy zones.  Never raises.
+
+    Extension points (see :mod:`scheda.plugins`):
+
+    * ``actor`` comes from an :class:`AuthProvider` when one is installed and the
+      caller did not pass an explicit ``actor``; an empty/garbage answer leaves
+      the default in place.
+    * the assembled record is handed to an :class:`AuditSink` **and** written
+      locally.  The sink is a forwarder, not a replacement — a deployment that
+      loses ``audit.jsonl`` to a broken plugin would otherwise lose its audit
+      trail, and the file is what the shipped tooling reads.
+
+    With no plugins installed this is byte-for-byte the previous behaviour
+    (``audit.audit_event`` with the same arguments).
     """
-    audit.audit_event(cfg, action, **fields)
+    bundle = _plugins(cfg)
+    if bundle.auth is not None and not str(fields.get("actor") or "").strip():
+        actor = _identify(bundle.auth, action, fields)
+        if actor:
+            fields["actor"] = actor
+    record = _audit_record(cfg, action, **fields)
+    if bundle.audit is not None:
+        try:
+            bundle.audit.emit(record)
+        except Exception as exc:  # noqa: BLE001 - forwarding is best effort
+            _plugin_failed("audit", exc)
+    _write_audit_record(cfg, record)
 
 
 def file_logger(cfg: Config, *, structured: bool = True, event: str | None = None):
@@ -180,36 +348,43 @@ def search_payload(
     callers that run the same query twice (``search_with_refresh`` does) and
     want one record, not two.
     """
+    bundle = _plugins(cfg)
+    policy = bundle.zone
     result = search(
         cfg, query, zone=zone, limit=limit, snippet_chars=snippet_chars,
         fresh_seconds=cfg.stale_minutes * 60, deep=deep,
     )
+    # ZonePolicy may withhold paths the caller is not allowed to see.  With no
+    # plugin this is a plain copy of ``result.hits`` and ``denied`` stays False,
+    # so the payload below is identical to what this function returned before
+    # extensions existed.
+    hits, denied = _apply_zone_policy(policy, result.hits)
     payload = {
-        "ok": bool(result.hits),
+        "ok": bool(hits),
         "query": result.query,
         "tokens": result.tokens,
         "zones": list(result.zones),
-        "count": len(result.hits),
+        "count": len(hits),
         "relaxed": result.relaxed,
         "dropped": result.dropped,
         "stale": result.stale,
-        "note": " | ".join(x for x in (result.note, note) if x),
-        "hits": [hit_dict(h) for h in result.hits],
+        "note": _note_with_denial(" | ".join(x for x in (result.note, note) if x), denied),
+        "hits": [hit_dict(h) for h in hits],
     }
     if audit:
         # Metadata only — the audit trail must not become a side channel that
         # hands back text from a zone the caller could not search.
         audit_event(cfg, "search", zone=zone, query=query,
-                    hits=len(result.hits), transport=transport)
+                    hits=len(hits), transport=transport)
 
     # The passes below only run when the first one was weak, and each one is
     # allowed to fail into "do nothing".  See scheda.expansion for why.
     from . import expansion
 
     fresh_seconds = cfg.stale_minutes * 60
-    confidence = expansion.confidence_fields(cfg, query, result.hits)
-    target = limit or (len(result.hits) or 10)
-    current_hits = list(result.hits)
+    confidence = expansion.confidence_fields(cfg, query, hits)
+    target = limit or (len(hits) or 10)
+    current_hits = list(hits)
 
     if expansion.needs_rewrite(query, result.hits, confidence):
         started = time.monotonic()
@@ -259,6 +434,11 @@ def search_payload(
             confidence = expansion.confidence_fields(cfg, query, reranked)
 
     payload.update(confidence)
+    # Expansion may have searched again and merged a path the policy refuses;
+    # one final sweep keeps "no denied path in the payload" true for every
+    # return path of this function.  No plugin ⇒ untouched object.
+    if policy is not None:
+        payload = _sweep_denied(payload, policy)
     return payload
 
 
@@ -300,7 +480,16 @@ def read_payload(cfg: Config, rel: str, *, start: int = 1, lines: int = 80,
     ``audit=False`` is for *internal* reads — query expansion opens pages to
     build a better query, and recording those as "the user read this file" would
     turn the audit trail into noise that hides the real accesses.
+
+    A :class:`ZonePolicy` that answers ``False`` for the path raises
+    :class:`PermissionError` *before* the file is opened, so a denied read never
+    costs an I/O round trip and the refusal is recorded (``lines=0``) instead of
+    looking like a read that happened to return nothing.
     """
+    if _denied(_plugins(cfg).zone, rel):
+        if audit:
+            audit_event(cfg, "read", path=rel, transport=transport, lines=0)
+        raise PermissionError(f"{DENIED_NOTE}: {rel}")
     result = read(cfg, rel, start=start, lines=lines)
     if audit:
         audit_event(cfg, "read", path=rel, transport=transport,

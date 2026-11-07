@@ -87,7 +87,7 @@ scheda --version
 从源码跑测试前先装那唯一一个依赖（`pip install -e .` 已经带上了）：
 
 ```bash
-python3 -m unittest discover -s tests -t .     # 546 个测试，约 15 秒，全离线
+python3 -m unittest discover -s tests -t .     # 645 个测试，约 20 秒，全离线
 ```
 
 ---
@@ -186,7 +186,7 @@ scheda push                        # 把本地 _incoming/ 的提案推上去
 | `import --from PATH [--format NAME] --prefix P [--zone Z] [--write]` | 仅 `--write` | 把别的工具的导出变成页面 —— 见 [docs/import.md](docs/import.md) |
 | `push [files…] [--force] [--expect SHA256] [--log [N]] [--allow-undeclared] [--json]` | ✔ | 上传 `_incoming/` 提案（可能被取代闸门整批拦下） |
 | `mcp` | — | 在 stdio 上跑 MCP 服务器（给 agent 宿主用） |
-| `web [--bind HOST] [--port PORT]` | — | 只读界面：状态、搜索、读页、`/healthz`（默认只绑 localhost，无鉴权） |
+| `web [--bind HOST] [--port PORT] [--auth] [--no-rewrite]` | — | 只读界面：状态、搜索、读页、`/healthz`（默认只绑 localhost）。`--auth` 需要 `users.json`，没有就拒绝启动 |
 
 全局 flag 写在子命令前后都可以（`scheda --json status` ≡ `scheda status --json`）。
 
@@ -402,7 +402,7 @@ scheda refresh
 
 ## 状态
 
-Alpha（0.9.0），已有 546 个测试（单元 + 端到端 + 传输层 + CLI 冒烟 + MCP + 打包契约，全部离线可跑）：
+Alpha（0.10.0），已有 645 个测试（单元 + 端到端 + 传输层 + CLI 冒烟 + MCP + 打包契约，全部离线可跑）：
 
 ```bash
 python3 -m unittest discover -s tests -t . -v

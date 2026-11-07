@@ -4,6 +4,59 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] — 2026-11-07
+
+The four structural gaps from `docs/architecture.md`, closed. Nothing about
+retrieval changed: with no plugin, no user store and an unchanged mirror, a
+search is still byte-identical to 0.9.0.
+
+### Added
+
+- **In-process extension points** (`plugins.py`): `AuthProvider` (who is asking),
+  `AuditSink` (forward audit records to a SIEM — the local file is still written),
+  `ZonePolicy` (take over the mirror/index/query decision per path). Discovered
+  through the `scheda.plugins` entry-point group, cached, and **failure is
+  harmless** — a plugin that raises is reported on stderr and skipped. With no
+  plugin installed, `load()` returns three `None`s and every code path is the
+  built-in one. `SCHEDA_PLUGINS=off` disables discovery entirely.
+- **Multi-user authentication for the web UI** (`auth.py`, default **off**):
+  `users.json` with scrypt-hashed passwords (stdlib, no third-party crypto),
+  roles `reader`/`writer`/`admin`, per-user zone allow-lists, and server-side
+  sessions whose tokens are stored only as SHA-256 digests. Login/logout, CSRF
+  baseline (same-origin + `SameSite=Strict`), `/healthz` stays anonymous for
+  liveness probes. **`--auth` without a user store refuses to start** — serving
+  without login while the operator believes authentication is on is worse than
+  not starting.
+- **Incremental indexing** (default): a page whose `[mtime_ns, size]` has not
+  moved keeps its chunks; changed pages are re-chunked, vanished pages dropped,
+  and the delta is applied to a copy that is swapped in atomically. Measured on
+  the fixture corpus: unchanged build 0.001 s vs 0.05 s full. The result is
+  **verified against a fresh rebuild** (page/chunk counts, FTS5 corpus stats,
+  and the resulting chunk set), and anything the state file cannot describe — a
+  different chunking signature, a foreign index file, a journal beside the DB, a
+  corrupt state — falls back to a full rebuild rather than guessing. `index
+  --full` is the explicit escape hatch.
+
+### Changed
+
+- **`cli.py` 1800 → 305 lines**: the 19 commands moved to `scheda/commands/`
+  (`common.py` + seven modules). Help text, exit codes and error messages are
+  byte-identical (`--help` output compares equal by md5 for all 17 invocations);
+  a `test_commands.py` guard keeps the registry and the parser in lockstep.
+- `index --json` now reports `reused` / `rebuilt` / `removed` / `written`
+  alongside the totals. `chunks` is the index total, not this run's writes — the
+  delta was leaking into it, which made a one-page rebuild report "1 chunk".
+
+### Fixed
+
+- `webui.serve()` returns a bool instead of `None`, so the CLI can exit 2 when
+  `--auth` cannot be honoured.
+- The auth tests no longer assume a private audit file or an empty session table
+  (both are per-home and shared across a test class).
+
+Tests: 645 (was 546). The new 99 are plugin (23), commands (12), auth (48),
+incremental index (9) and architecture invariants (7).
+
 ## [0.9.0] — 2026-11-07
 
 **Renamed: `dsh-kb` → `scheda`.** The old name tied the core to one host (DSH),

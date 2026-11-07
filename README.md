@@ -96,7 +96,7 @@ Running the suite from a source checkout needs the same single dependency first
 (`pip install handrolled`, already pulled in by `pip install -e .`):
 
 ```bash
-python3 -m unittest discover -s tests -t .     # 546 tests, ~15 s, fully offline
+python3 -m unittest discover -s tests -t .     # 645 tests, ~20 s, fully offline
 ```
 
 ---
@@ -196,7 +196,7 @@ by tests.
 | `diff [--incoming-days DAYS] [--json]` | — (reads the source) | read-only health report: remote changes, local mirror gaps, index drift, backlog, conflicts, escapes |
 | `rag-check [--prune] [--force]` | only with `--prune` | vector store ↔ index consistency, page **and chunk** level; report-only (dry-run) by default |
 | `sync [--prune] [--full] [--dry-run]` | ✔ | incremental pull; `--prune` is opt-in; `--full` ignores the manifest |
-| `index` | ✔ (local) | rebuild the index |
+| `index [--full]` | ✔ (local) | bring the index up to date — incremental by default, `--full` rebuilds every page |
 | `refresh [--prune] [--full]` | ✔ | sync + index |
 | `search <q> [-n] [--zone] [--snippet] [--refresh] [--no-auto-refresh] [--json]` | — | ranked search |
 | `read <path> [--start] [--lines] [--json]` | — | line window |
@@ -205,7 +205,7 @@ by tests.
 | `import --from PATH [--format NAME] --prefix P [--zone Z] [--write]` | only with `--write` | turn another tool's export into pages — [docs/import.md](docs/import.md) |
 | `push [files…] [--force] [--expect SHA256] [--log [N]] [--allow-undeclared] [--json]` | ✔ | upload proposals (the supersession gate can refuse the batch) |
 | `mcp` | — | run the MCP server on stdio (for agent hosts) |
-| `web [--bind HOST] [--port PORT]` | — | read-only UI: status, search, page read, `/healthz` (localhost by default; there is no authentication) |
+| `web [--bind HOST] [--port PORT] [--auth] [--no-rewrite]` | — | read-only UI: status, search, page read, `/healthz` (localhost by default). `--auth` requires `users.json` and refuses to start without it |
 
 Shared flags are accepted before or after the subcommand.
 
@@ -423,7 +423,7 @@ without `--allow-public`. See [docs/import.md](docs/import.md).
 
 ## Status
 
-Alpha (0.9.0) with 546 tests (unit, end-to-end, transport, CLI smoke, MCP and the
+Alpha (0.10.0) with 645 tests (unit, end-to-end, transport, CLI smoke, MCP and the
 packaging contract — all offline):
 
 ```bash

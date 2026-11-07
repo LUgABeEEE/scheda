@@ -35,12 +35,46 @@ queried with the wrong join.
 The index is always a **local, disposable artifact**: it lives next to the
 mirror, never on the share (SQLite is not safe on network filesystems), and can
 be rebuilt from the mirror at any time.
+
+Incremental builds
+------------------
+:func:`build` rebuilds from scratch only when it has to.  Otherwise it copies
+the live database, drops the pages that changed or vanished, re-chunks only
+those, and swaps the copy in — the same ``.tmp`` + :func:`os.replace` contract,
+so a crash still leaves the old index queryable.
+
+What makes that safe is that the state file (``<home>/state/index-state.json``)
+records exactly one thing per page: ``[mtime_ns, size]``, the same pair
+``mirror.sync`` compares, at nanosecond resolution.  A page whose pair is
+unchanged is *not read at all*; its chunks stay as they are, which is what turns
+a no-change rebuild into a directory walk (measured: 0.13 s at 10 000 pages
+against 5.4 s for the full build).  When nothing changed at all the database is
+not even copied.
+
+Two things force a full rebuild instead: a chunking setting that differs from
+the one the state records (a chunk is named by its content, so a different cut
+renames every chunk of every page — see ``docs/design.md`` §5.5), and any
+database the state does not describe (deleted, replaced, different FTS5 storage
+version, non-CAS schema).  The rule is "an incremental result must be
+indistinguishable from a full one"; when that cannot be *proved*, the full path
+runs.
+
+``bm25()`` needs one repair afterwards.  FTS5 caches the corpus statistics it
+normalises by — row count and total token count — in a single ``%_data`` record,
+and a delete from a ``contentless_delete`` table does not update that record
+(measured, SQLite 3.45.1: one row deleted out of three left the record saying
+three rows, and every score in the database moved by 2–3 %).  :func:`build`
+therefore recomputes the record from the surviving rows — see
+:func:`_repair_fts_averages`, which also explains why ``optimize`` and
+``rebuild`` cannot do it for us.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
+import shutil
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -93,6 +127,24 @@ class IndexStats:
     #: starts using the fields says so in one line instead of silently.
     superseded_pages: int = 0
     supersede_edges: int = 0
+    #: Incremental accounting.  ``reused`` — pages whose chunks were kept
+    #: verbatim because their ``[mtime_ns, size]`` had not moved; ``rebuilt`` —
+    #: pages that were re-chunked (a full rebuild reports every page here);
+    #: ``removed`` — pages dropped because they left the mirror.  The three are
+    #: a partition of what happened, so ``reused + rebuilt`` is the page count of
+    #: the resulting index and ``removed`` is *not* part of it.
+    reused: int = 0
+    rebuilt: int = 0
+    removed: int = 0
+    #: Blocks actually written by this run.  ``chunks`` above is the total in the
+    #: resulting index; reporting the delta there was a bug that made
+    #: `index --json` and the state file say "1 chunk" after a one-page rebuild.
+    written: int = 0
+
+    @property
+    def incremental(self) -> bool:
+        """Whether this build reused anything (i.e. was not a full rebuild)."""
+        return self.reused > 0
 
     @property
     def summary(self) -> str:
@@ -610,8 +662,230 @@ def _chunk_page(raw: str, cfg: Config) -> list[tuple[int, str]]:
     return out
 
 
-def build(cfg: Config, *, on_event=None) -> IndexStats:
-    """Rebuild the index from scratch, in the CAS schema.
+#: Schema id of ``<home>/state/index-state.json``.  A different id means "no
+#: state": the file describes what the *index* already holds, so a shape this
+#: version does not understand must never be guessed at — a full rebuild is the
+#: safe direction.
+STATE_SCHEMA = 1
+
+#: FTS5 shadow-table layout whose corpus-statistics record this module knows how
+#: to recompute (:func:`_repair_fts_averages`).  Anything else forces a full
+#: rebuild rather than writing a record we cannot read back.
+_FTS_STORAGE_VERSION = 4
+
+
+def index_state_path(cfg: Config) -> Path:
+    """``<home>/state/index-state.json`` — next to the mirror's manifest."""
+    return cfg.home / "state" / "index-state.json"
+
+
+def _chunking_signature(cfg: Config) -> dict:
+    """Every setting that changes *how* a page is cut into chunks.
+
+    A chunk is named by its content, so changing any of these renames every
+    chunk of every page and invalidates ``vectors.sqlite`` wholesale.  Recording
+    the triple (not just ``chunk_strategy``) is what keeps that from happening
+    silently when someone edits ``chunk_lines``.
+    """
+    return {
+        "strategy": getattr(cfg, "chunk_strategy", "lines"),
+        "lines": int(getattr(cfg, "chunk_lines", 0) or 0),
+        "max_chars": int(getattr(cfg, "chunk_max_chars", DEFAULT_CHUNK_MAX_CHARS) or 0),
+    }
+
+
+def _stat_signature(path: Path) -> list[int]:
+    """``[mtime_ns, size]`` — what ``mirror.sync`` compares, at nanosecond resolution.
+
+    The mirror is written by :func:`os.replace` from a freshly written temp file,
+    so a page that changed content always has a new ``mtime_ns``: the pair only
+    has to be finer-grained than the writes, not smarter than them.  (The one
+    edit this cannot see is the one ``sync`` cannot see either — a share whose
+    timestamps are truncated to a second, edited in that same second with the
+    byte size unchanged.  ``sync --full`` is the documented answer there.)
+    """
+    st = path.stat()
+    return [int(st.st_mtime_ns), int(st.st_size)]
+
+
+def _db_signature(db: Path) -> list[int] | None:
+    """``[size, mtime_ns]`` of the index file, or ``None`` when it is gone."""
+    try:
+        st = db.stat()
+    except OSError:
+        return None
+    return [int(st.st_size), int(st.st_mtime_ns)]
+
+
+def load_index_state(cfg: Config) -> dict | None:
+    """Read the incremental state, or ``None`` when absent, damaged or foreign.
+
+    Corruption has exactly one answer — "rebuild everything" — because this file
+    is a description of what the index already contains: trusting a half-written
+    one would leave pages that changed while it was broken permanently stale.
+    """
+    try:
+        data = json.loads(index_state_path(cfg).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("schema") != STATE_SCHEMA:
+        return None
+    if not isinstance(data.get("files"), dict) or not isinstance(data.get("chunking"), dict):
+        return None
+    return data
+
+
+def _save_index_state(cfg: Config, state: dict) -> None:
+    """Write the state atomically (``.tmp`` + :func:`os.replace`), as ``mirror`` does."""
+    path = index_state_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, separators=(",", ":")),
+                   encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _state_payload(cfg: Config, files: dict, pages: int, chunks: int) -> dict:
+    """Assemble the state file. Written *after* the database is in place."""
+    return {
+        "schema": STATE_SCHEMA,
+        "chunking": _chunking_signature(cfg),
+        "db": _db_signature(cfg.index_db),
+        "counts": {"pages": pages, "chunks": chunks},
+        "files": files,
+        "builtAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+
+
+def _put_varint(value: int) -> bytes:
+    """Encode one integer exactly as SQLite's ``sqlite3PutVarint`` does."""
+    v = int(value)
+    if v < 0:
+        raise ValueError(f"varint needs a non-negative value, got {v}")
+    if v <= 0x7F:
+        return bytes((v,))
+    groups: list[int] = []
+    while v:
+        groups.append(v & 0x7F)
+        v >>= 7
+    groups.reverse()
+    n = len(groups)
+    if n > 8:                                       # pragma: no cover - needs 2**56 tokens
+        raise ValueError("varint overflow")
+    groups[0] |= (0xFF << (9 - n)) & 0xFF
+    return bytes(groups)
+
+
+def _first_varint(blob: bytes) -> int:
+    """Decode the first varint of an FTS5 ``%_docsize.sz`` blob.
+
+    That blob is one varint per column holding the row's token count for the
+    column; with the single ``toks`` column this module indexes, the first
+    varint *is* the row length.
+    """
+    if not blob:
+        return 0
+    lead = blob[0]
+    if lead <= 0x7F:
+        return lead
+    length = 1
+    mask = 0x80
+    while mask and (lead & mask):
+        length += 1
+        mask >>= 1
+    value = lead & (mask - 1) if mask else 0
+    for byte in blob[1:length]:
+        value = (value << 7) | (byte & 0x7F)
+    return value
+
+
+def _repair_fts_averages(db: Path) -> bool:
+    """Recompute FTS5's corpus-statistics record; ``False`` = unknown layout.
+
+    ``bm25()`` normalises by two numbers — how many rows the table holds, and how
+    many tokens they hold in total — and FTS5 keeps both in one record:
+    ``chunks_data`` row 1, ``varint(nRow)`` followed by one ``varint(total)`` per
+    column.  A ``DELETE`` against a ``contentless_delete`` table does **not**
+    update that record.  Measured on SQLite 3.45.1 (three rows, one deleted):
+
+    ===========================================  =========  =========
+    database                                     record     truth
+    ===========================================  =========  =========
+    built fresh with 2 rows                      (2, 113)   (2, 113)
+    built with 3 rows, then one deleted          (3, 130)   (2, 113)
+    ===========================================  =========  =========
+
+    ... and every score in the second database is 2–3 % off the fresh one, which
+    is enough to reorder hits.  Neither documented repair works: ``optimize``
+    leaves the record alone (verified), and ``rebuild`` is refused outright on a
+    contentless table (``'rebuild' may not be used with a contentless fts5
+    table``).  So the record is recomputed here from the rows that survive —
+    ``meta`` for the count, ``%_docsize.sz`` for the lengths — which reproduces
+    the fresh build's bytes exactly (the equivalence test compares the record
+    itself, not just the scores).
+
+    Returns ``False`` when the storage version or column layout is not the one
+    this was verified against; :func:`build` then rebuilds from scratch instead
+    of writing a record it does not understand.
+    """
+    con = sqlite3.connect(str(db))
+    try:
+        row = con.execute("select v from chunks_config where k = 'version'").fetchone()
+        if row is None or int(str(row[0])) != _FTS_STORAGE_VERSION:
+            return False
+        columns = [r[1] for r in con.execute("pragma table_info(chunks)")]
+        if columns != ["toks"]:
+            return False                            # multi-column record, not handled
+        rows = 0
+        total = 0
+        for (blob,) in con.execute(
+                "select d.sz from chunks_docsize d join meta m on m.rid = d.id"):
+            total += _first_varint(blob)
+            rows += 1
+        record = _put_varint(rows) + _put_varint(total)
+        current = con.execute("select block from chunks_data where rowid = 1").fetchone()
+        if current is None or current[0] != record:
+            con.execute("insert or replace into chunks_data(rowid, block) values (1, ?)",
+                        (record,))
+            con.commit()
+        return True
+    except sqlite3.Error:                           # pragma: no cover - unreadable shadow table
+        return False
+    finally:
+        con.close()
+
+
+def _drop_page(con: sqlite3.Connection, rel: str) -> int:
+    """Delete every row belonging to one page; returns how many chunks went.
+
+    FTS first, then ``meta`` — the order pinned by ``tests/test_index_cas.py``:
+    ``meta`` first leaves a row that still MATCHes but is invisible through the
+    join, and ``integrity-check`` does not notice it.  ``supersedes`` only holds
+    edges *declared by this page*; an edge pointing *at* it belongs to another
+    page's frontmatter and stays, exactly as a full rebuild would leave it.
+    """
+    rids = [rid for (rid,) in con.execute("select rid from meta where path = ?", (rel,))]
+    for rid in rids:
+        con.execute("delete from chunks where rowid = ?", (rid,))
+        con.execute("delete from meta where rid = ?", (rid,))
+    con.execute("delete from pages where path = ?", (rel,))
+    con.execute("delete from supersedes where child = ?", (rel,))
+    return len(rids)
+
+
+class _FullRebuild(Exception):
+    """Internal: this incremental attempt cannot be trusted — rebuild instead.
+
+    Never escapes the module: :func:`build` catches it, says why on the event
+    stream, and runs the full path.  An incremental result that cannot be shown
+    to equal a full one must not be shipped quietly.
+    """
+
+
+def _build_full(cfg: Config, emit) -> IndexStats:
+    """Rebuild every page from scratch, in the CAS schema (the historical path).
 
     The rebuild is written to ``<db>.tmp`` and swapped in with :func:`os.replace`,
     then the previous database is kept as ``<db>.prev``.  Two reasons:
@@ -633,8 +907,6 @@ def build(cfg: Config, *, on_event=None) -> IndexStats:
     used is logged **only** when it is not the historical one, so a default
     deployment's log stays byte-identical.
     """
-    emit = on_event or (lambda _m: None)
-    started = time.perf_counter()
     db = cfg.index_db
     db.parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(str(db) + ".tmp")
@@ -648,12 +920,14 @@ def build(cfg: Config, *, on_event=None) -> IndexStats:
 
     stats = IndexStats()
     ids = _ChunkIds()
+    files: dict[str, list[int]] = {}
     con = sqlite3.connect(str(tmp))
     try:
         con.executescript(_CAS_DDL)
         for rel, path in _index_files(cfg):
             stats.pages += 1
             try:
+                signature = _stat_signature(path)
                 raw = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
@@ -686,6 +960,7 @@ def build(cfg: Config, *, on_event=None) -> IndexStats:
                     (rid, expand_for_index(block)),
                 )
                 stats.chunks += 1
+            files[rel] = signature
         con.execute("insert into chunks(chunks) values ('optimize')")
         con.commit()
     finally:
@@ -713,7 +988,235 @@ def build(cfg: Config, *, on_event=None) -> IndexStats:
         emit(f"!! {len(ids.rid_collisions)} rid collision(s) resolved by probing: "
              f"{ids.rid_collisions[:3]}")
 
-    stats.bytes = db.stat().st_size if db.exists() else 0
+    # Every page was re-chunked, so this is what `reused`/`rebuilt` have to say
+    # about a full build: nothing was kept, everything was made again.
+    stats.rebuilt = stats.pages
+    _save_index_state(cfg, _state_payload(cfg, files, len(files), stats.chunks))
+    return stats
+
+
+def _build_incremental(cfg: Config, emit) -> IndexStats | None:
+    """Bring the live index up to date in place — ``None`` means "do a full one".
+
+    ``None`` is returned (not raised) for the cases where incrementality is
+    simply not on offer — no state, a state written under different chunking
+    settings, a database that is not the one the state describes, a leftover
+    journal file — because the caller's response is the same in all of them.
+    :class:`_FullRebuild` is reserved for "incremental was attempted and its
+    result could not be verified".
+    """
+    db = cfg.index_db
+    state = load_index_state(cfg)
+    if state is None or not db.exists():
+        return None
+    if state.get("chunking") != _chunking_signature(cfg):
+        emit("incremental: chunking settings differ from the state — full rebuild")
+        return None
+    if state.get("db") != _db_signature(db):
+        emit("incremental: index file is not the one the state describes — full rebuild")
+        return None
+    for suffix in ("-wal", "-shm"):
+        if Path(str(db) + suffix).exists():
+            emit("incremental: journal file beside the index — full rebuild")
+            return None
+
+    files: dict[str, list[int]] = {}
+    for rel, path in _index_files(cfg):
+        try:
+            files[rel] = _stat_signature(path)
+        except OSError:                             # vanished mid-walk: not ours to index
+            continue
+    known = state.get("files") or {}
+    changed = [rel for rel, signature in files.items() if known.get(rel) != signature]
+    removed = [rel for rel in known if rel not in files]
+
+    if not changed and not removed:
+        # Nothing to write.  The live database already *is* what a full rebuild
+        # would produce, so rewriting it would only burn I/O — this is the case
+        # the state file exists for (measured: 0.13 s at 10 000 pages).
+        counts = state.get("counts") or {}
+        stats = IndexStats(pages=int(counts.get("pages", len(files))),
+                           chunks=int(counts.get("chunks", 0)),
+                           reused=len(files))
+        emit(f"index unchanged: {stats.pages} pages reused, nothing rewritten")
+        return stats
+
+    return _apply_incremental(cfg, state, files, changed, removed, emit)
+
+
+def _apply_incremental(cfg: Config, state: dict, files: dict[str, list[int]],
+                       changed: list[str], removed: list[str], emit) -> IndexStats:
+    """Copy the index, drop what went away, re-chunk what moved, swap it in."""
+    db = cfg.index_db
+    tmp = Path(str(db) + ".tmp")
+    for suffix in ("", "-wal", "-shm"):
+        stale = Path(str(tmp) + suffix)
+        if stale.exists():
+            stale.unlink()
+    # The live file is never opened for writing: it has to stay readable (and
+    # swappable back) if anything below goes wrong.
+    shutil.copyfile(db, tmp)
+
+    stats = IndexStats()
+    ids = _ChunkIds()
+    dropped = 0
+    old_total = 0
+    # Blocks written *by this run*.  ``stats.chunks`` is the total once the delta
+    # is applied — the two are different numbers, and conflating them made the
+    # state file (and every caller of `index --json`) report 1 chunk for a
+    # 10 000-page index that happened to rebuild one page.
+    written = 0
+    con = sqlite3.connect(str(tmp))
+    try:
+        if _schema_kind(con) != SCHEMA_CAS:
+            raise _FullRebuild("index schema is not the CAS one")
+        old_total = con.execute("select count(*) from meta").fetchone()[0]
+        for rel in removed:
+            dropped += _drop_page(con, rel)
+            stats.removed += 1
+        for rel in changed:
+            dropped += _drop_page(con, rel)
+            path = cfg.mirror_dir / rel
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                raise _FullRebuild(f"cannot read {rel}: {exc}") from exc
+            page = page_meta(rel, raw)
+            con.execute(
+                "insert or replace into pages(path, type, title, description, tags,"
+                " status, superseded_by, valid_until, fm_at, indexed_at)"
+                " values (?,?,?,?,?,?,?,?,?,?)",
+                (rel, page.type, page.title, page.description, page.tags_text,
+                 page.status, page.superseded_by, page.valid_until, page.fm_at,
+                 time.strftime("%Y-%m-%dT%H:%M:%S%z")),
+            )
+            for parent in page.supersedes:
+                con.execute("insert or ignore into supersedes(child, parent) values (?,?)",
+                            (rel, parent))
+                stats.supersede_edges += 1
+            if page.superseded_by:
+                stats.superseded_pages += 1
+            for startline, block in _chunk_page(raw, cfg):
+                rid, cid = ids.allocate(rel, block)
+                con.execute(
+                    "insert into meta(rid, chunk_id, path, startline, text) values (?,?,?,?,?)",
+                    (rid, cid, rel, startline, block),
+                )
+                con.execute(
+                    "insert into chunks(rowid, toks) values (?,?)",
+                    (rid, expand_for_index(block)),
+                )
+                written += 1
+            stats.rebuilt += 1
+        if dropped:
+            # A deleted chunk in a contentless table is a tombstone until a merge
+            # drops it, and until then it still answers MATCH and is still
+            # counted by `vocab`.  Merging is what makes `(path, chunk_id, …)`
+            # *and* the inverted index agree with a fresh build.
+            con.execute("insert into chunks(chunks) values ('optimize')")
+        con.commit()
+        pages_in_db = con.execute("select count(distinct path) from meta").fetchone()[0]
+        chunks_in_db = con.execute("select count(*) from meta").fetchone()[0]
+    except sqlite3.Error as exc:
+        raise _FullRebuild(f"{type(exc).__name__}: {exc}") from exc
+    finally:
+        con.close()
+
+    def discard() -> None:
+        for suffix in ("", "-wal", "-shm"):
+            junk = Path(str(tmp) + suffix)
+            if junk.exists():
+                junk.unlink()
+
+    expected_chunks = old_total - dropped + written
+    if pages_in_db != len(files) or chunks_in_db != expected_chunks:
+        discard()
+        raise _FullRebuild(
+            f"delta reproduced {pages_in_db} pages / {chunks_in_db} chunks, "
+            f"a full build would have {len(files)} / {expected_chunks}")
+    if chunks_in_db == 0:
+        discard()
+        raise RuntimeError("rebuild produced an empty index; previous index kept")
+    if not _repair_fts_averages(tmp):
+        discard()
+        raise _FullRebuild("cannot recompute the FTS5 statistics record")
+
+    if db.exists():
+        os.replace(db, Path(str(db) + ".prev"))
+    for suffix in ("-wal", "-shm"):
+        junk = Path(str(db) + suffix)
+        if junk.exists():
+            junk.unlink()
+    os.replace(tmp, db)
+
+    if ids.id_collisions:                           # pragma: no cover - needs a colliding id
+        emit(f"!! {len(ids.id_collisions)} chunk_id collision(s) resolved by suffix: "
+             f"{ids.id_collisions[:3]}")
+    if ids.rid_collisions:                          # pragma: no cover - needs a 64-bit collision
+        emit(f"!! {len(ids.rid_collisions)} rid collision(s) resolved by probing: "
+             f"{ids.rid_collisions[:3]}")
+
+    stats.pages = pages_in_db
+    stats.chunks = chunks_in_db          # total in the index, not this run's writes
+    stats.written = written
+    stats.reused = pages_in_db - stats.rebuilt
+    # `superseded_pages` counts this run's pages only; report the table's truth.
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as check:
+        try:
+            stats.superseded_pages = check.execute(
+                "select count(*) from pages where coalesce(superseded_by,'') <> ''"
+            ).fetchone()[0]
+            stats.supersede_edges = check.execute("select count(*) from supersedes").fetchone()[0]
+        except sqlite3.Error:                       # pragma: no cover - unreadable pages table
+            pass
+    _save_index_state(cfg, _state_payload(cfg, files, stats.pages, stats.chunks))
+    emit(f"incremental: {stats.reused} reused / {stats.rebuilt} rebuilt / "
+         f"{stats.removed} removed")
+    return stats
+
+
+def build(cfg: Config, on_event=None, *, incremental: bool = True) -> IndexStats:
+    """Bring the index in line with the mirror — incrementally when it can be.
+
+    ``incremental=True`` (the default) applies only what changed: a page whose
+    ``[mtime_ns, size]`` matches the state file is kept as it is, a page that
+    changed is re-chunked, a page that left the mirror is dropped, and the whole
+    thing is applied to a *copy* that is then swapped in with
+    :func:`os.replace` — the same crash-safe ``.tmp`` + ``.prev`` contract as a
+    full rebuild (:func:`_build_full`, which is also where the chunking
+    invariants are documented).
+
+    The result must be indistinguishable from a full rebuild, and that is
+    enforced rather than assumed: the delta is applied, the resulting counts are
+    compared with what a full build would produce, FTS5's corpus-statistics
+    record is recomputed (:func:`_repair_fts_averages`), and *any* doubt — a
+    missing or damaged state file, a different chunking setting, a database the
+    state does not describe, an unreadable page, an unexpected count — falls
+    back to the full path with the reason on the event stream.
+
+    ``incremental=False`` forces a full rebuild, as does ``SCHEDA_INDEX_FULL=1``
+    in the environment (the CLI's ``index`` subcommand has no ``--full`` switch
+    yet; this is the reachable equivalent from a shell or a timer).
+
+    Returns :class:`IndexStats`, whose ``reused`` / ``rebuilt`` / ``removed``
+    counters say what happened: a full rebuild reports ``rebuilt == pages``.
+    """
+    emit = on_event or (lambda _m: None)
+    started = time.perf_counter()
+    if os.environ.get("SCHEDA_INDEX_FULL", "").strip().lower() not in ("", "0", "false", "no"):
+        incremental = False
+
+    stats = None
+    if incremental:
+        try:
+            stats = _build_incremental(cfg, emit)
+        except _FullRebuild as why:
+            emit(f"incremental build refused ({why}); rebuilding from scratch")
+            stats = None
+    if stats is None:
+        stats = _build_full(cfg, emit)
+
+    stats.bytes = cfg.index_db.stat().st_size if cfg.index_db.exists() else 0
     stats.duration = time.perf_counter() - started
     emit(f"indexed {stats.summary}")
     return stats
