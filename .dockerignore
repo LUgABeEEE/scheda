@@ -1,0 +1,64 @@
+# Build-context hygiene.  The image needs pyproject.toml + README.md + LICENSE +
+# src/ and nothing else (see Dockerfile): no tests, no docs, no VCS metadata, and
+# above all no local state — a developer's ~/.scheda mirror contains private
+# pages and must never be sent to the daemon or baked into a layer.
+
+# --- VCS / CI ---------------------------------------------------------------
+.git
+.gitattributes
+.github
+.gitignore
+
+# --- build artifacts --------------------------------------------------------
+build/
+dist/
+*.egg-info
+**/*.egg-info
+src/**/__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- not needed to build (and excluded from the image on purpose) -----------
+tests/
+docs/
+scripts/
+examples/
+deploy/
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md
+MANIFEST.in
+*.md
+!README.md
+
+# --- local state / secrets --------------------------------------------------
+.selfcheck/
+.kb/
+mirror/
+state/
+logs/
+index/
+config.json
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.bak
+*.bak-*
+*.experimental-*
+.venv/
+venv/
+.env
+.env.*
+*.pem
+*.key
+
+# --- the deploy files themselves are not part of the context ----------------
+# The builder always reads Dockerfile and .dockerignore from the client side, so
+# listing them here keeps them out of the context without breaking the build
+# (they can simply never be COPYed into an image).
+docker-compose.yml
+.dockerignore
+Dockerfile

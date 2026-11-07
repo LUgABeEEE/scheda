@@ -4,6 +4,118 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-11-07
+
+**Renamed: `dsh-kb` → `scheda`.** The old name tied the core to one host (DSH),
+which is exactly what stops it from being plugged into other agents. From this
+release the core is `scheda`; `dsh-kb` becomes the name of the DSH adapter.
+
+The name is the Latin/Italian *scheda* — the catalogue card of a library's card
+catalogue: one card, one record, findable by hand. Availability was checked
+against PyPI and DNS before choosing it (`.dev` and `.io` were free at the time).
+
+### Changed
+
+- Package `scheda`, module `scheda`, command `scheda`. The old command
+  `dsh-kb` is still installed **by this same package**, so a systemd timer,
+  compose file or shell script calling `dsh-kb refresh` does not break.
+- State directory defaults to `~/.scheda`, but **does not relocate an existing
+  deployment**: if `~/.scheda` does not exist and `~/.dsh-kb` does, the old path
+  keeps being used. Moving is explicit, never a silent surprise.
+- Environment variables are `SCHEDA_*` with `DSH_KB_*` as a fallback — an
+  upgraded unit file keeps working without being edited.
+- Docs, examples, Docker/compose, systemd units and CI all speak `scheda`.
+- `integrations/` added: one directory per host (DSH, Claude Code, Cursor, Cline,
+  Codex). Most of them are configuration, not code — MCP is host-agnostic.
+
+### Compatibility
+
+- `pip install -U dsh-kb` from ≤0.8.0 gets a shim that depends on `scheda` and
+  forwards the command; see `shim/` in the repository.
+- Nothing is retroactive: ≤0.6.0 stays MIT, 0.7.0 was never published, 0.8.0 was
+  the first dual-licensed release under the old name.
+
+Tests: 546 (was 535); the 10 new ones are `tests/test_rename_compat.py`.
+
+## [0.8.0] — 2026-11-07
+
+**License change, first.** From this release the project is dual-licensed:
+**AGPL-3.0-or-later** for the community build, or a **commercial license** for
+closed-source embedding, OEM/white-label and hosted services (`COMMERCIAL.md`).
+Use inside one organization does not trigger any AGPL obligation. Releases up to
+and including 0.6.0 stay MIT and cannot be withdrawn; 0.7.0 was never published.
+Details: `docs/licensing.md`.
+
+This is also the release that makes the project installable, runnable,
+deployable and auditable by someone who is not the author. No retrieval
+behaviour changed: with the defaults, a search is byte-identical to 0.6.0.
+
+### Added
+
+- **`dsh-kb init`** — creates the state directory, writes a config skeleton and
+  prints the four commands that follow. It pulls nothing, so it is safe on a
+  machine with no share and no credentials, and it refuses to overwrite an
+  existing `config.json` without `--force`. `--json` gives installers a stable
+  shape to read.
+- **`dsh-kb web`** — a read-only UI on `127.0.0.1:8765` (status, search, page
+  read, `/healthz`), standard library only. No write endpoint exists, paths are
+  re-checked against the mirror root, and the CSP forbids every external
+  resource. `--bind` is allowed but warns once (even under `--quiet`): there is
+  no authentication. `--no-rewrite` turns off the optional local-model query
+  rewrite for the web process — a browser tab must not hang for 12 seconds the
+  way a batch command may. `search` and `read` each leave one metadata-only
+  audit record.
+- **Audit trail** (`logs/audit.jsonl`) — who searched what, in which zone, with
+  the query truncated to 200 characters. Metadata only: page bodies and
+  credentials never enter it, so the audit file cannot become a side channel
+  around the privacy zones.
+- **Structured event log** (`logs/events.jsonl`) — one JSON object per line
+  (`ts`/`level`/`event`/`msg`/`extra`) next to the unchanged plain-text log, with
+  size-based rotation (5 MiB × 3 by default).
+- **Windows platform backend** (`platform_fs.py`) — network-drive detection was
+  read from `/proc/mounts` on every platform, which silently degraded to
+  "local, writable" on Windows. Drive type, mapped-drive UNC targets and
+  disconnected mappings now come from the Win32 API (via `ctypes`), write
+  permission is decided by a real zero-byte probe rather than `os.access`, and
+  every Win32 call is injectable so the whole branch is tested on Linux.
+- **Deployment shapes** (`deploy/`, `Dockerfile`, `docker-compose.yml`) — a
+  non-root image with a healthcheck, a compose file with a read-only bundle mount
+  and a named state volume, a systemd unit + timer, and a Windows scheduled-task
+  script (pure ASCII, PowerShell 5.1).
+
+### Fixed
+
+- **A machine-specific path had shipped in 0.6.0's sdist.**
+  `tests/test_image_arm.py` hard-coded the maintainer's numpy fallback
+  directory, which is also why the `hygiene` job on the published commit was
+  red. The fallback now comes from `DSH_KB_TEST_NUMPY_PATH`; the repository
+  contains no machine paths.
+- **The install section never mentioned `pip install dsh-kb`.** It only showed
+  `pip install -e .`, so a reader arriving from PyPI was told to install from a
+  checkout.
+- Three places still claimed "zero dependencies" after 0.6.0 had one
+  (`mcp_server.py`, `MANIFEST.in`, `docs/release.md`). They now say what is
+  true: one pure-stdlib dependency, no compiled extensions.
+- `CONTRIBUTING.md` told contributors the suite needs nothing installed; it
+  needs the one dependency, which `pip install -e .` already provides.
+
+### Changed
+
+- **Publishing is tag-driven and token-less.** `publish.yml` runs on `v*` tags,
+  authenticates with Trusted Publishing (OIDC, `id-token: write` — no stored
+  secret), builds with a pinned `SOURCE_DATE_EPOCH` so the same commit rebuilds
+  byte-identically, and fails when the tag and `dsh_kb.__version__` disagree.
+- **CI gained a Windows job** covering the platform, source and CLI modules —
+  the ones that actually contain platform branches.
+- **Dual license in effect** (AGPL-3.0-or-later + commercial): `LICENSE`,
+  `pyproject.toml`, both READMEs, the OCI label and every source file's SPDX
+  header now say so. `CONTRIBUTING.md` carries the contribution-licensing
+  statement that keeps a dual license possible, and CI fails on a missing SPDX
+  header. Nothing is retroactive: ≤0.6.0 stays MIT.
+
+Tests: 535 (was 435), including 100 new ones for `init`, the packaging contract,
+platform backends, audit, the web UI and the deploy artifacts.
+
 ## [0.6.0] — 2026-11-07
 
 ### Added

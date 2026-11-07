@@ -13,7 +13,7 @@ import pathlib
 import tempfile
 import unittest
 
-from dsh_kb import skills
+from scheda import skills
 
 
 class FakeConfig:

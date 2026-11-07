@@ -1,6 +1,6 @@
 {
   "source": "local",
-  "local_root": "/srv/dsh-kb/bundle",
+  "local_root": "/srv/scheda/bundle",
   "stale_minutes": 15,
   "snippet_chars": 240,
   "default_limit": 8,

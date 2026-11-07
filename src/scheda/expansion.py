@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Query expansion, confidence scoring and result merging.
 
 The search itself is lexical and fast; this module is what turns a *weak* hit
@@ -29,8 +30,8 @@ Where the data lives
 --------------------
 The rewrite cache and the synonym table are state, so they default to
 ``<home>/state/rewrite-cache.sqlite`` and ``<home>/dict/synonyms.json``.  Both
-can be pointed elsewhere with ``DSH_KB_REWRITE_CACHE_DB`` /
-``DSH_KB_DICT_PATH`` — there is no built-in absolute path, because a library has
+can be pointed elsewhere with ``SCHEDA_REWRITE_CACHE_DB`` /
+``SCHEDA_DICT_PATH`` — there is no built-in absolute path, because a library has
 no business guessing where a machine keeps its data.
 """
 
@@ -50,21 +51,21 @@ from typing import Sequence
 # --------------------------------------------------------------------------- #
 # Confidence bands (cross-encoder scores).  Soft signal only — see module docs.
 # --------------------------------------------------------------------------- #
-CONF_HIGH = float(os.environ.get("DSH_KB_CONF_HIGH", "3.0"))
-CONF_MEDIUM = float(os.environ.get("DSH_KB_CONF_MEDIUM", "-0.5"))
-CONFIDENCE_ENABLED = os.environ.get("DSH_KB_CONFIDENCE", "1") != "0"
+CONF_HIGH = float(os.environ.get("SCHEDA_CONF_HIGH", "3.0"))
+CONF_MEDIUM = float(os.environ.get("SCHEDA_CONF_MEDIUM", "-0.5"))
+CONFIDENCE_ENABLED = os.environ.get("SCHEDA_CONFIDENCE", "1") != "0"
 
 # --------------------------------------------------------------------------- #
 # Query rewriting (any OpenAI-ish/local chat endpoint).  Off means "never call".
 # --------------------------------------------------------------------------- #
-REWRITE_MODE = os.environ.get("DSH_KB_REWRITE", "auto")          # auto | always | off
-REWRITE_MODEL = os.environ.get("DSH_KB_REWRITE_MODEL", "qwen2.5:3b")
-REWRITE_ENDPOINT = os.environ.get("DSH_KB_REWRITE_ENDPOINT", "http://127.0.0.1:11434")
-REWRITE_TIMEOUT = float(os.environ.get("DSH_KB_REWRITE_TIMEOUT", "12"))
-REWRITE_MAX_VARIANTS = int(os.environ.get("DSH_KB_REWRITE_VARIANTS", "2"))
-REWRITE_TRIGGER_SCORE = float(os.environ.get("DSH_KB_REWRITE_TRIGGER", "1.0"))
-REWRITE_KEEP_ALIVE = os.environ.get("DSH_KB_REWRITE_KEEP_ALIVE", "24h")
-REWRITE_PROMPT_VERSION = os.environ.get("DSH_KB_REWRITE_PROMPT_VERSION", "p1")
+REWRITE_MODE = os.environ.get("SCHEDA_REWRITE", "auto")          # auto | always | off
+REWRITE_MODEL = os.environ.get("SCHEDA_REWRITE_MODEL", "qwen2.5:3b")
+REWRITE_ENDPOINT = os.environ.get("SCHEDA_REWRITE_ENDPOINT", "http://127.0.0.1:11434")
+REWRITE_TIMEOUT = float(os.environ.get("SCHEDA_REWRITE_TIMEOUT", "12"))
+REWRITE_MAX_VARIANTS = int(os.environ.get("SCHEDA_REWRITE_VARIANTS", "2"))
+REWRITE_TRIGGER_SCORE = float(os.environ.get("SCHEDA_REWRITE_TRIGGER", "1.0"))
+REWRITE_KEEP_ALIVE = os.environ.get("SCHEDA_REWRITE_KEEP_ALIVE", "24h")
+REWRITE_PROMPT_VERSION = os.environ.get("SCHEDA_REWRITE_PROMPT_VERSION", "p1")
 
 REWRITE_PROMPT = (
     "把下面的检索问题改写成 3 条不同角度的检索查询，用于在技术知识库里查找答案。要求：\n"
@@ -77,44 +78,44 @@ REWRITE_PROMPT = (
 # --------------------------------------------------------------------------- #
 # Rewrite cache: exact match by default; optional semantic match behind a flag.
 # --------------------------------------------------------------------------- #
-REWRITE_CACHE_ON = os.environ.get("DSH_KB_REWRITE_CACHE", "1") != "0"
-REWRITE_SEMANTIC = float(os.environ.get("DSH_KB_REWRITE_SEMANTIC", "1.01"))
-REWRITE_EMBED_MODEL = os.environ.get("DSH_KB_REWRITE_EMBED_MODEL", "bge-m3")
-REWRITE_SEMANTIC_ENABLED = os.environ.get("DSH_KB_REWRITE_SEMANTIC_ENABLED", "0") == "1"
+REWRITE_CACHE_ON = os.environ.get("SCHEDA_REWRITE_CACHE", "1") != "0"
+REWRITE_SEMANTIC = float(os.environ.get("SCHEDA_REWRITE_SEMANTIC", "1.01"))
+REWRITE_EMBED_MODEL = os.environ.get("SCHEDA_REWRITE_EMBED_MODEL", "bge-m3")
+REWRITE_SEMANTIC_ENABLED = os.environ.get("SCHEDA_REWRITE_SEMANTIC_ENABLED", "0") == "1"
 CACHE_VERSION = "v1"
 
 # --------------------------------------------------------------------------- #
 # Domain dictionary (off by default: it needs a curated file to be worth it).
 # --------------------------------------------------------------------------- #
-DICT_ON = os.environ.get("DSH_KB_DICT", "0").strip().lower() not in ("0", "off", "false", "no", "")
-DICT_MAX_VARIANTS = int(os.environ.get("DSH_KB_DICT_VARIANTS", "3"))
+DICT_ON = os.environ.get("SCHEDA_DICT", "0").strip().lower() not in ("0", "off", "false", "no", "")
+DICT_MAX_VARIANTS = int(os.environ.get("SCHEDA_DICT_VARIANTS", "3"))
 _dict_cache: dict = {"path": None, "mtime": 0.0, "groups": []}
 
 # --------------------------------------------------------------------------- #
 # Page-level rerank (off by default: it costs one model call per passage).
 # --------------------------------------------------------------------------- #
-PAGE_RERANK = os.environ.get("DSH_KB_PAGE_RERANK", "off").strip().lower()   # off | auto | always
-PAGE_TOP = int(os.environ.get("DSH_KB_PAGE_TOP", "5"))
-PAGE_CHARS = int(os.environ.get("DSH_KB_PAGE_CHARS", "800"))
-PAGE_STRIDE = int(os.environ.get("DSH_KB_PAGE_STRIDE", "600"))
-PAGE_MAX_CHARS = int(os.environ.get("DSH_KB_PAGE_MAX_CHARS", "20000"))
+PAGE_RERANK = os.environ.get("SCHEDA_PAGE_RERANK", "off").strip().lower()   # off | auto | always
+PAGE_TOP = int(os.environ.get("SCHEDA_PAGE_TOP", "5"))
+PAGE_CHARS = int(os.environ.get("SCHEDA_PAGE_CHARS", "800"))
+PAGE_STRIDE = int(os.environ.get("SCHEDA_PAGE_STRIDE", "600"))
+PAGE_MAX_CHARS = int(os.environ.get("SCHEDA_PAGE_MAX_CHARS", "20000"))
 
 #: How the extra result lists are combined: ``fill`` keeps the original order and
 #: only fills empty slots; ``top2`` keeps the original top two and lets RRF
 #: compete for the rest.
-MERGE_MODE = os.environ.get("DSH_KB_MERGE", "fill").strip().lower()
+MERGE_MODE = os.environ.get("SCHEDA_MERGE", "fill").strip().lower()
 
 
 # --------------------------------------------------------------------------- #
 # Paths (state, not code — always relative to home unless overridden)
 # --------------------------------------------------------------------------- #
 def cache_db(cfg) -> Path:
-    override = os.environ.get("DSH_KB_REWRITE_CACHE_DB")
+    override = os.environ.get("SCHEDA_REWRITE_CACHE_DB")
     return Path(override) if override else Path(cfg.home) / "state" / "rewrite-cache.sqlite"
 
 
 def dict_path(cfg) -> Path:
-    override = os.environ.get("DSH_KB_DICT_PATH")
+    override = os.environ.get("SCHEDA_DICT_PATH")
     return Path(override) if override else Path(cfg.home) / "dict" / "synonyms.json"
 
 
@@ -126,7 +127,8 @@ def page_excerpt(cfg, hit, chars: int = 1200) -> str:
     try:
         from .service import read_payload
 
-        payload = read_payload(cfg, hit.path, start=max(1, hit.line - 5), lines=18)
+        payload = read_payload(cfg, hit.path, start=max(1, hit.line - 5), lines=18,
+                                  transport="expansion", audit=False)
         text = "\n".join(line["text"] for line in payload["lines"])
         if text.strip():
             return text[:chars]

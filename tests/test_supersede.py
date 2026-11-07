@@ -32,8 +32,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from dsh_kb import index, supersede  # noqa: E402
-from dsh_kb.config import Config  # noqa: E402
+from scheda import index, supersede  # noqa: E402
+from scheda.config import Config  # noqa: E402
 
 FILLER = "\n".join(f"filler line {i} lorem ipsum dolor sit amet" for i in range(20))
 

@@ -13,11 +13,11 @@ from types import SimpleNamespace
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from dsh_kb import ragvec  # noqa: E402
-from dsh_kb.index import Hit  # noqa: E402
+from scheda import ragvec  # noqa: E402
+from scheda.index import Hit  # noqa: E402
 
 try:                      # numpy is optional: the vector arm is opt-in.
-    ragvec._numpy()       # ask the module, so DSH_KB_NUMPY_PATH counts too
+    ragvec._numpy()       # ask the module, so SCHEDA_NUMPY_PATH counts too
     HAVE_NUMPY = True
 except Exception:
     HAVE_NUMPY = False
@@ -104,12 +104,12 @@ class TestVectorArm(unittest.TestCase):
         ragvec.VectorArm.embed = self._orig  # 走真实 urllib
         import os
 
-        os.environ["DSH_KB_EMBED_ENDPOINT"] = "http://127.0.0.1:1/api/embed"
+        os.environ["SCHEDA_EMBED_ENDPOINT"] = "http://127.0.0.1:1/api/embed"
         try:
             with self.assertRaises(Exception):
                 ragvec.augment(self.cfg, "查询", 3, [], 40, zone="z01")
         finally:
-            os.environ.pop("DSH_KB_EMBED_ENDPOINT", None)
+            os.environ.pop("SCHEDA_EMBED_ENDPOINT", None)
 
 
 # --------------------------------------------------------------------------- #
@@ -194,8 +194,8 @@ class TestOrphanVectors(unittest.TestCase):
 
     def test_all_orphans_raise_and_search_falls_back_to_lexical(self):
         """② 全是孤儿：加载直接抛错，``index.search`` 把它变成一条 note、照常返回词法命中。"""
-        from dsh_kb import index
-        from dsh_kb.config import Config, RagConfig
+        from scheda import index
+        from scheda.config import Config, RagConfig
 
         home = self.tmp / "home"
         page = home / "mirror" / "z1-restricted" / "page.md"

@@ -4,7 +4,7 @@ Three layers, deliberately:
 
 1. **Protocol** — drive :func:`handle` directly and assert the JSON-RPC shape
    (handshake, notifications are never answered, tools, error surfaces).
-2. **Process** — run ``python -m dsh_kb mcp`` as a real subprocess and speak
+2. **Process** — run ``python -m scheda mcp`` as a real subprocess and speak
    newline-delimited JSON to it.  This is what catches "something printed to
    stdout and corrupted the stream".
 3. **Interop** — drive the server with the **official MCP Python SDK**.  A
@@ -24,8 +24,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from dsh_kb.config import Config  # noqa: E402
-from dsh_kb.mcp_server import (  # noqa: E402
+from scheda.config import Config  # noqa: E402
+from scheda.mcp_server import (  # noqa: E402
     INSTRUCTIONS,
     PROTOCOL_VERSIONS,
     handle,
@@ -55,7 +55,7 @@ except Exception:  # pragma: no cover - environment dependent
 
 def make_home(root: Path) -> tuple[Config, Path]:
     """Build a fixture bundle plus a synced mirror and index."""
-    from dsh_kb.service import refresh
+    from scheda.service import refresh
 
     bundle = root / "share"
     for rel, text in FIXTURE.items():
@@ -70,7 +70,7 @@ def make_home(root: Path) -> tuple[Config, Path]:
 class TestProtocol(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp = Path(tempfile.mkdtemp(prefix="dsh-kb-mcp-"))
+        cls.tmp = Path(tempfile.mkdtemp(prefix="scheda-mcp-"))
         cls.cfg, _ = make_home(cls.tmp)
 
     @classmethod
@@ -96,7 +96,7 @@ class TestProtocol(unittest.TestCase):
     def test_initialize_advertises_tools_and_server_info(self):
         result = self.rpc("initialize", {})["result"]
         self.assertIn("tools", result["capabilities"])
-        self.assertEqual(result["serverInfo"]["name"], "dsh-kb")
+        self.assertEqual(result["serverInfo"]["name"], "scheda")
         self.assertTrue(result["instructions"])
 
     def test_notifications_are_never_answered(self):
@@ -233,7 +233,7 @@ class TestProcess(unittest.TestCase):
     """Talk to a real subprocess: this is where stdout hygiene is proven."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="dsh-kb-mcp-proc-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="scheda-mcp-proc-"))
         self.cfg, _ = make_home(self.tmp)
 
     def tearDown(self):
@@ -249,10 +249,10 @@ class TestProcess(unittest.TestCase):
              "params": {"name": "search", "arguments": {"query": "挂载"}}},
         ]
         payload = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in requests)
-        env = dict(os.environ, DSH_KB_HOME=str(self.cfg.home),
-                   DSH_KB_SOURCE="local", DSH_KB_LOCAL_ROOT=str(self.cfg.home.parent / "share"),
+        env = dict(os.environ, SCHEDA_HOME=str(self.cfg.home),
+                   SCHEDA_SOURCE="local", SCHEDA_LOCAL_ROOT=str(self.cfg.home.parent / "share"),
                    PYTHONPATH=str(SRC))
-        done = subprocess.run([sys.executable, "-m", "dsh_kb", "mcp"], input=payload,
+        done = subprocess.run([sys.executable, "-m", "scheda", "mcp"], input=payload,
                               capture_output=True, text=True, env=env, timeout=120)
         self.assertEqual(done.returncode, 0, done.stderr)
         out = [json.loads(line) for line in done.stdout.splitlines() if line.strip()]
@@ -277,7 +277,7 @@ class TestOfficialSdkInterop(unittest.TestCase):
     """The hand-rolled server must satisfy the real client implementation."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="dsh-kb-mcp-sdk-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="scheda-mcp-sdk-"))
         self.cfg, self.bundle = make_home(self.tmp)
 
     def tearDown(self):
@@ -289,9 +289,9 @@ class TestOfficialSdkInterop(unittest.TestCase):
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
-        env = dict(os.environ, DSH_KB_HOME=str(self.cfg.home), DSH_KB_SOURCE="local",
-                   DSH_KB_LOCAL_ROOT=str(self.bundle), PYTHONPATH=str(SRC))
-        params = StdioServerParameters(command=sys.executable, args=["-m", "dsh_kb", "mcp"], env=env)
+        env = dict(os.environ, SCHEDA_HOME=str(self.cfg.home), SCHEDA_SOURCE="local",
+                   SCHEDA_LOCAL_ROOT=str(self.bundle), PYTHONPATH=str(SRC))
+        params = StdioServerParameters(command=sys.executable, args=["-m", "scheda", "mcp"], env=env)
 
         async def scenario():
             async with stdio_client(params) as (read, write):

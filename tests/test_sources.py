@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from dsh_kb.sources import (  # noqa: E402
+from scheda.sources import (  # noqa: E402
     FilesystemSource,
     SmbSource,
     SourceReadOnly,
@@ -79,7 +79,7 @@ class TestRootNormalisation(unittest.TestCase):
 
 class TestFilesystemSource(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="dsh-kb-src-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="scheda-src-"))
         (self.tmp / "z0-public").mkdir()
         (self.tmp / "z0-public" / "a.md").write_text("hello\n", encoding="utf-8")
 
@@ -194,7 +194,7 @@ class TestSmbSource(unittest.TestCase):
     """Drive the real parser through a stub client with real output format."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="dsh-kb-smb-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="scheda-smb-"))
         self.share = self.tmp / "share"
         (self.share / "z0-public" / "deep").mkdir(parents=True)
         (self.share / "z0-public" / "mount stale.md").write_text("x" * 1234, encoding="utf-8")
@@ -296,7 +296,7 @@ class TestWebdavSource(unittest.TestCase):
             return []
 
     def _source(self, root=""):
-        from dsh_kb.sources import WebdavSource
+        from scheda.sources import WebdavSource
 
         return WebdavSource(self.FakeClient(), root=root)
 
@@ -306,7 +306,7 @@ class TestWebdavSource(unittest.TestCase):
         Measured: a 217-file import failed 217 times for exactly this reason.
         MKCOL does not recurse, so every level must be created.
         """
-        from dsh_kb.sources import WebdavSource
+        from scheda.sources import WebdavSource
 
         calls: list[tuple[str, str]] = []
 
@@ -327,7 +327,7 @@ class TestWebdavSource(unittest.TestCase):
                                  ("PUT", "z0-public/manual/A.md")])
 
     def test_write_does_not_repeat_parent_creation(self):
-        from dsh_kb.sources import WebdavSource
+        from scheda.sources import WebdavSource
 
         calls: list[tuple[str, str]] = []
 
@@ -349,7 +349,7 @@ class TestWebdavSource(unittest.TestCase):
         self.assertEqual(len([c for c in calls if c[0] == "PUT"]), 2)
 
     def test_top_level_write_needs_no_mkcol(self):
-        from dsh_kb.sources import WebdavSource
+        from scheda.sources import WebdavSource
 
         calls: list[str] = []
 
@@ -367,7 +367,7 @@ class TestWebdavSource(unittest.TestCase):
 
     def test_mkcol_failures_do_not_mask_the_put(self):
         """Already-exists and permission errors are the PUT's business."""
-        from dsh_kb.sources import WebdavSource
+        from scheda.sources import WebdavSource
 
         calls: list[str] = []
 
@@ -404,7 +404,7 @@ class TestWebdavSource(unittest.TestCase):
 
     def test_encoded_collection_path_is_compared_in_decoded_space(self):
         """The client stores its collection encoded; hrefs arrive encoded too."""
-        from dsh_kb.sources import WebdavSource
+        from scheda.sources import WebdavSource
 
         class EncodedClient:
             base_path = "/webdav/%E7%9F%A5%E8%AF%86%E5%BA%93"
@@ -417,7 +417,7 @@ class TestWebdavSource(unittest.TestCase):
 
     def test_unreachable_collection_raises_instead_of_looking_empty(self):
         """A dead server must not be reported as "0 files, refresh succeeded"."""
-        from dsh_kb.sources import SourceUnavailable, WebdavSource
+        from scheda.sources import SourceUnavailable, WebdavSource
 
         class DeadClient:
             base_path = "/kb"
@@ -430,7 +430,7 @@ class TestWebdavSource(unittest.TestCase):
         self.assertIn("cannot list", str(ctx.exception))
 
     def test_a_failing_subdirectory_is_recorded_but_not_fatal(self):
-        from dsh_kb.sources import WebdavSource
+        from scheda.sources import WebdavSource
         from handrolled.webdav import DavEntry
 
         class HalfDeadClient:
@@ -453,7 +453,7 @@ class TestSmbParsing(unittest.TestCase):
     """Pure parser tests, including the `cd`-prefixed header form."""
 
     def test_headers_are_stripped_relative_to_the_subdir(self):
-        from dsh_kb.sources import _parse_smbclient_ls
+        from scheda.sources import _parse_smbclient_ls
 
         entries = _parse_smbclient_ls(SMB_LISTING, "知识库")
         rels = {e.rel for e in entries}
@@ -462,7 +462,7 @@ class TestSmbParsing(unittest.TestCase):
         self.assertNotIn("知识库/z0-public", rels)
 
     def test_empty_listing_is_empty(self):
-        from dsh_kb.sources import _parse_smbclient_ls
+        from scheda.sources import _parse_smbclient_ls
 
         self.assertEqual(_parse_smbclient_ls("", ""), [])
 

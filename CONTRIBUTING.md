@@ -5,14 +5,28 @@ load-bearing — please read the short list below before sending a patch.
 
 ## Running the tests
 
-No dependencies, no network, no fixtures to download:
+No network, no fixtures to download — only the project's one dependency
+(`handrolled`, pure stdlib), which `pip install -e .` already installs:
 
 ```bash
+python -m pip install -e .
 python -m unittest discover -s tests -t . -v
 ```
 
-There is nothing to install. If you find yourself needing `pip install` to run
-the suite, that is a bug worth reporting.
+If you need anything beyond that to run the suite, it is a bug worth reporting.
+
+## Contribution licensing
+
+By submitting a pull request you confirm that you wrote the contribution (or have
+the right to submit it), and you license it to this project under **both**:
+
+1. the AGPL-3.0-or-later (the community license), and
+2. the project's commercial license,
+
+so the maintainer can keep offering both. Without that, a single merged patch
+makes the dual license impossible to maintain — the code would be permanently
+MIT-only. If you cannot agree to this, please open an issue with your idea
+instead of a pull request; that is genuinely useful too.
 
 ## House rules
 
@@ -25,7 +39,7 @@ network and no shares mounted. Transport tests use fakes and stubs (see
 `tests/test_sources.py`, which drives the SMB parser through a stub
 `smbclient`). If a feature cannot be tested offline, design it so it can.
 
-**3. The MCP server is hand-rolled.** `src/dsh_kb/mcp_server.py` speaks
+**3. The MCP server is hand-rolled.** `src/scheda/mcp_server.py` speaks
 newline-delimited JSON-RPC on the standard library, and
 `tests/test_mcp.py` proves it against the *official* MCP SDK. Do not replace it
 with the SDK: dependency drift would become our users' problem.
@@ -45,7 +59,7 @@ in the repository.
 
 ## Adding a transport
 
-Transports implement the small interface in `src/dsh_kb/sources.py`:
+Transports implement the small interface in `src/scheda/sources.py`:
 
 ```python
 def walk(self) -> list[Entry]: ...          # the whole tree, one call
@@ -76,6 +90,6 @@ recurse. A 217-file import failed 217 times before this existed.
 ## Reporting a problem
 
 Open an issue with the command you ran, what you expected, and what happened —
-`dsh-kb doctor` covers a lot of ground and its output is usually the fastest
+`scheda doctor` covers a lot of ground and its output is usually the fastest
 path to a diagnosis. For anything security-related, see [SECURITY.md](SECURITY.md)
 instead of opening a public issue.

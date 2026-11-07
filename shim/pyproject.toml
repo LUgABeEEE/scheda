@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsh-kb"
+version = "0.9.0"
+description = "Compatibility shim: the project was renamed to scheda. Installs scheda and keeps `import dsh_kb` working."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-or-later"
+license-files = ["../LICENSE"]
+authors = [{ name = "scheda contributors" }]
+dependencies = ["scheda>=0.9.0"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+]
+
+[project.urls]
+Homepage = "https://github.com/LUgABeEEE/scheda"
+Source = "https://github.com/LUgABeEEE/scheda"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -33,9 +33,30 @@ jobs:
 
       - name: Check the console script runs
         run: |
-          dsh-kb --version
-          dsh-kb --help > /dev/null
-          python -c "import dsh_kb, sys; print('import ok, version', dsh_kb.__version__)"
+          scheda --version
+          scheda --help > /dev/null
+          python -c "import scheda, sys; print('import ok, version', scheda.__version__)"
+
+  windows:
+    name: platform checks (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Windows is a supported target (a UNC share is why generated names are
+      # lowercased), and the file-system layer is where it used to diverge:
+      # mount semantics were read from /proc/mounts on every platform.  This job
+      # starts with the modules that contain the platform branches; widening it
+      # to the full suite is the next step, not a promise made in prose.
+      - name: Install the package and its one dependency
+        run: python -m pip install --quiet -e .
+
+      - name: Platform, CLI and source tests
+        run: |
+          python -m unittest tests.test_platform_fs tests.test_sources tests.test_cli -v
 
   interop:
     name: MCP interop (official SDK)
@@ -70,7 +91,7 @@ jobs:
           python-version: "3.12"
 
       # Run this first, on a runner with no numpy at all: it asserts that
-      # `import dsh_kb` pulls in no heavy third-party module and that every
+      # `import scheda` pulls in no heavy third-party module and that every
       # optional layer reports itself absent when nothing is configured.
       # The dependency, and nothing optional: this job proves the optional
       # layers stay off unless told otherwise.
@@ -115,13 +136,13 @@ jobs:
           set -eu
           python -m venv /tmp/verify
           /tmp/verify/bin/pip install --quiet dist/*.whl
-          /tmp/verify/bin/dsh-kb --version
-          /tmp/verify/bin/dsh-kb --help > /dev/null
+          /tmp/verify/bin/scheda --version
+          /tmp/verify/bin/scheda --help > /dev/null
           /tmp/verify/bin/python - <<'PY'
           import sys
-          import dsh_kb
+          import scheda
           assert not [m for m in ("numpy", "onnxruntime", "tokenizers") if m in sys.modules]
-          print("import ok", dsh_kb.__version__)
+          print("import ok", scheda.__version__)
           PY
           python - <<'PY'
           import email.parser, pathlib, zipfile
@@ -137,6 +158,27 @@ jobs:
           print("exactly one dependency:", deps[0])
           PY
 
+  license-headers:
+    name: license headers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The project is dual-licensed (AGPL-3.0-or-later + commercial). Corporate
+      # SBOM tooling reads the SPDX identifier, not the LICENSE file, so a source
+      # file without one looks unlicensed to the people who audit dependencies.
+      - name: Every source file carries its SPDX identifier
+        run: |
+          set -eu
+          fail=0
+          for f in src/scheda/*.py; do
+            if ! head -2 "$f" | grep -qx '# SPDX-License-Identifier: AGPL-3.0-or-later'; then
+              echo "::error file=$f::missing SPDX-License-Identifier header"
+              fail=1
+            fi
+          done
+          exit "$fail"
+
   hygiene:
     name: privacy and secret hygiene
     runs-on: ubuntu-latest
@@ -149,7 +191,7 @@ jobs:
 
           # Credential-shaped values (assignments with what looks like a real value).
           if git grep -nIE '(password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key)[[:space:]]*[:=][[:space:]]*["'"'"']?[^[:space:]"'"'"'`,;)]{8,}' \
-               -- . ':!*.lock' | grep -vE 'os\.environ|self\.password|password[[:space:]]*=[[:space:]]*(password|value)|password=yourpassword|DSH_KB_[A-Z_]*PASSWORD'; then
+               -- . ':!*.lock' | grep -vE 'os\.environ|self\.password|password[[:space:]]*=[[:space:]]*(password|value)|password=yourpassword|SCHEDA_[A-Z_]*PASSWORD'; then
             echo "::error::credential-shaped assignment found"; fail=1
           fi
 

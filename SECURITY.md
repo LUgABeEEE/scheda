@@ -3,11 +3,11 @@
 ## Reporting
 
 Please do **not** open a public issue for a vulnerability. Use GitHub's private
-[security advisory](https://github.com/LUgABeEEE/dsh-kb/security/advisories/new)
+[security advisory](https://github.com/LUgABeEEE/scheda/security/advisories/new)
 form; if that is unavailable, contact the maintainer directly and give us a
 chance to fix it before disclosing.
 
-Include the command or tool call, the version (`dsh-kb --version`), and what an
+Include the command or tool call, the version (`scheda --version`), and what an
 attacker gains. We will confirm receipt and keep you posted.
 
 ## Supported versions
@@ -16,14 +16,14 @@ attacker gains. We will confirm receipt and keep you posted.
 
 ## What this tool is, security-wise
 
-dsh-kb reads a directory or a share, keeps a **local mirror and index** of it,
+scheda reads a directory or a share, keeps a **local mirror and index** of it,
 and answers searches. It is honest about its boundaries:
 
 * **It is not a sandbox.** It reads whatever you point it at, with your
   privileges. Do not point it at a share you would not let the process read in
   full — the `never` list and the zones are described below and are *not* a
   security boundary.
-* **Credentials are never stored by dsh-kb.** They come from the environment or
+* **Credentials are never stored by scheda.** They come from the environment or
   from files you own (`chmod 600`), and are passed to `smbclient`/HTTP at call
   time. Nothing writes them to the mirror, the index, the manifest or the log.
 * **The `never` list is a safety net, not a boundary.** It keeps obvious
@@ -49,7 +49,7 @@ and answers searches. It is honest about its boundaries:
 * Search results, snippets and logs can contain content from the knowledge base.
   Treat the log file as being as sensitive as the bundle.
 * The WebDAV client verifies TLS by default and supports mutual TLS. Setting
-  `DSH_KB_WEBDAV_CONNECT` separates the address it connects to from the name it
+  `SCHEDA_WEBDAV_CONNECT` separates the address it connects to from the name it
   verifies (`Host`/SNI), which is needed for appliances whose certificate CN is
   not an address — do not disable verification to work around that.
 

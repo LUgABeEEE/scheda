@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Read/write sources: where the authoritative bundle lives.
 
 Three interchangeable implementations behind one duck-typed interface::
@@ -31,9 +32,9 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from .config import Config, source_available
-from handrolled.mounts import describe_path, stale_hint
+from .platform_fs import describe_path, probe_write, stale_hint
 
-PROBE_NAME = ".dsh-kb-write-probe"
+PROBE_NAME = ".scheda-write-probe"
 
 #: One listing row: ``name … attributes  size  date``.
 _SMB_ROW_RE = re.compile(
@@ -95,7 +96,17 @@ class FilesystemSource:
 
     # ---- metadata ------------------------------------------------------
     def describe(self) -> dict:
-        return {**self.mount, "label": self.label, "root": str(self.root)}
+        info = {**self.mount, "label": self.label, "root": str(self.root)}
+        if info.get("readonly") is None:
+            # No mount table to consult (Windows): ``readonly`` arrives as None,
+            # meaning "unknown".  One real write decides it.  A failed probe is
+            # reported in ``probe_error`` and deliberately left as None — a
+            # probe that cannot run is not the same thing as a read-only share.
+            ok, why = self.probe_writable()
+            if ok:
+                info["readonly"] = False
+            info["probe_error"] = "" if ok else why
+        return info
 
     @property
     def is_network(self) -> bool:
@@ -117,6 +128,10 @@ class FilesystemSource:
         if self.mount.get("readonly"):
             return False, f"mounted read-only at {self.mount.get('mountpoint')}"
         folder = self.root / subdir if subdir else self.root
+        if str(self.mount.get("platform", "")).startswith("windows"):
+            # `os.access` ignores the ACLs that actually decide this on Windows,
+            # so the probe writes (and removes) a real 0-byte temp file instead.
+            return probe_write(folder)
         probe = folder / PROBE_NAME
         try:
             folder.mkdir(parents=True, exist_ok=True)
@@ -169,7 +184,7 @@ class FilesystemSource:
         if self.mount.get("readonly"):
             raise SourceReadOnly(
                 f"{self.root} is on a read-only mount ({self.mount.get('mountpoint')}); "
-                "write through another source (e.g. DSH_KB_SOURCE=webdav)"
+                "write through another source (e.g. SCHEDA_SOURCE=webdav)"
             )
         target = self.root / rel
         try:
@@ -177,7 +192,7 @@ class FilesystemSource:
         except OSError as exc:
             raise SourceReadOnly(f"cannot create {target.parent}: {stale_hint(exc)}") from exc
 
-        tmp = target.with_name(target.name + ".dsh-kb-tmp")
+        tmp = target.with_name(target.name + ".scheda-tmp")
         try:
             tmp.write_bytes(data)
             os.replace(tmp, target)
@@ -512,7 +527,7 @@ def open_source(cfg: Config):
     """
     kind, location = source_available(cfg)
     if not kind:
-        return None, f"no usable source ({location}) — set DSH_KB_MOUNT / DSH_KB_LOCAL_ROOT / DSH_KB_WEBDAV_ROOT"
+        return None, f"no usable source ({location}) — set SCHEDA_MOUNT / SCHEDA_LOCAL_ROOT / SCHEDA_WEBDAV_ROOT"
 
     if kind in ("local", "mount"):
         root = normalise_root(location)
@@ -524,10 +539,10 @@ def open_source(cfg: Config):
         return (
             SmbSource(
                 location,
-                subdir=os.environ.get("DSH_KB_SMB_SUBDIR", ""),
-                credentials=os.environ.get("DSH_KB_SMB_CREDENTIALS") or None,
-                username=os.environ.get("DSH_KB_SMB_USER") or None,
-                password=os.environ.get("DSH_KB_SMB_PASSWORD") or None,
+                subdir=os.environ.get("SCHEDA_SMB_SUBDIR", ""),
+                credentials=os.environ.get("SCHEDA_SMB_CREDENTIALS") or None,
+                username=os.environ.get("SCHEDA_SMB_USER") or None,
+                password=os.environ.get("SCHEDA_SMB_PASSWORD") or None,
             ),
             f"smb: {location}",
         )
@@ -539,33 +554,33 @@ def open_source(cfg: Config):
 def _webdav_from_config(cfg: Config, base_url: str):
     """Build a :class:`WebDAVClient` from config/env.
 
-    Secrets are read from the environment only (``DSH_KB_WEBDAV_USER`` /
-    ``DSH_KB_WEBDAV_PASSWORD``) or a credentials file — never from the config
+    Secrets are read from the environment only (``SCHEDA_WEBDAV_USER`` /
+    ``SCHEDA_WEBDAV_PASSWORD``) or a credentials file — never from the config
     file, so a config that gets shared cannot leak them.
     """
     from handrolled.webdav import WebDAVClient
 
-    password = os.environ.get("DSH_KB_WEBDAV_PASSWORD", "")
-    cred_file = os.environ.get("DSH_KB_WEBDAV_CREDENTIALS", "")
+    password = os.environ.get("SCHEDA_WEBDAV_PASSWORD", "")
+    cred_file = os.environ.get("SCHEDA_WEBDAV_CREDENTIALS", "")
     if cred_file and Path(cred_file).is_file():
         for line in Path(cred_file).read_text(encoding="utf-8", errors="replace").splitlines():
             key, _, value = line.partition("=")
             key = key.strip().upper()
-            if key in ("DSH_KB_WEBDAV_PASSWORD", "WEBDAV_PASSWORD") and not password:
+            if key in ("SCHEDA_WEBDAV_PASSWORD", "WEBDAV_PASSWORD") and not password:
                 password = value.strip()
-            if key in ("DSH_KB_WEBDAV_USER", "WEBDAV_USER"):
-                os.environ.setdefault("DSH_KB_WEBDAV_USER", value.strip())
+            if key in ("SCHEDA_WEBDAV_USER", "WEBDAV_USER"):
+                os.environ.setdefault("SCHEDA_WEBDAV_USER", value.strip())
 
     return WebDAVClient(
         base_url,
-        username=os.environ.get("DSH_KB_WEBDAV_USER", ""),
+        username=os.environ.get("SCHEDA_WEBDAV_USER", ""),
         password=password,
-        cert=os.environ.get("DSH_KB_WEBDAV_CERT") or None,
-        key=os.environ.get("DSH_KB_WEBDAV_KEY") or None,
-        ca=os.environ.get("DSH_KB_WEBDAV_CA") or None,
-        host_header=os.environ.get("DSH_KB_WEBDAV_HOST") or None,
-        connect_host=os.environ.get("DSH_KB_WEBDAV_CONNECT") or None,
-        verify=os.environ.get("DSH_KB_WEBDAV_VERIFY", "1") not in ("0", "false", "no"),
+        cert=os.environ.get("SCHEDA_WEBDAV_CERT") or None,
+        key=os.environ.get("SCHEDA_WEBDAV_KEY") or None,
+        ca=os.environ.get("SCHEDA_WEBDAV_CA") or None,
+        host_header=os.environ.get("SCHEDA_WEBDAV_HOST") or None,
+        connect_host=os.environ.get("SCHEDA_WEBDAV_CONNECT") or None,
+        verify=os.environ.get("SCHEDA_WEBDAV_VERIFY", "1") not in ("0", "false", "no"),
     )
 
 

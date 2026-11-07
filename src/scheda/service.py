@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Use-case layer shared by the CLI and the MCP server.
 
 Why this module exists: the MCP server must be able to refresh, search and read
@@ -11,6 +12,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from . import audit
 from .config import INCOMING_DIR, Config, source_available
 from .index import IndexStats, build, index_age, read, search, stats
 from .mirror import (
@@ -34,18 +36,67 @@ def open_configured_source(cfg: Config):
     return source
 
 
-def file_logger(cfg: Config):
-    """An ``on_event`` callback that writes to the log file and nothing else."""
+def log_event(cfg: Config, level: str, event: str, msg: str, **extra) -> None:
+    """Append one structured event to ``<home>/logs/events.jsonl``.
+
+    The machine-readable half of what :func:`file_logger` writes as plain text:
+    ``ts`` / ``level`` / ``event`` / ``msg`` plus an optional ``extra`` carrying
+    the numbers a ``jq`` query would want (``duration_ms``, ``pages``,
+    ``chunks``, ``fetched``, ``removed``, ``error``).
+
+    Best effort by contract: a log line that cannot be written must never turn
+    a working search into a failed one.  The failure is reported on ``stderr``
+    by :func:`scheda.audit.log_event`; nothing is raised.
+    """
+    audit.log_event(cfg, level, event, msg, **extra)
+
+
+def audit_event(cfg: Config, action: str, **fields) -> None:
+    """Append one audit record to ``<home>/logs/audit.jsonl``.
+
+    Answers "who, when, what did they look at" with metadata only: ``actor``
+    (default ``local``) / ``action`` / ``zone`` / ``query`` (truncated to 200
+    characters) / ``path`` / ``hits`` / ``transport``.  Page bodies and
+    credentials never enter this file, so the audit trail cannot become a side
+    channel around the privacy zones.  Never raises.
+    """
+    audit.audit_event(cfg, action, **fields)
+
+
+def file_logger(cfg: Config, *, structured: bool = True, event: str | None = None):
+    """An ``on_event`` callback that writes to the log file and nothing else.
+
+    The plain-text line (``<ts> <message>`` into ``cfg.log_path``) is unchanged
+    byte for byte — the CLI tees it to stderr and delivered behaviour depends on
+    it.  What changed is that it is no longer the *only* thing written and no
+    longer silently swallowed:
+
+    * every message is also appended to ``<home>/logs/events.jsonl`` as one JSON
+      object (``structured=False`` turns that half off, for callers that only
+      want the legacy text);
+    * an ``OSError`` prints ``scheda: log write failed: <ERRNO>`` on stderr
+      instead of vanishing — a full disk must be visible to whoever is on call.
+
+    ``event`` names the structured event explicitly.  When it is omitted the
+    name is guessed from the message text (:func:`scheda.audit.guess_event`,
+    deliberately coarse — pass ``event=`` when the caller knows better).
+    """
 
     def emit(message: str) -> None:
+        stamp = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
             cfg.log_path.parent.mkdir(parents=True, exist_ok=True)
             with cfg.log_path.open("a", encoding="utf-8") as handle:
-                handle.write(
-                    f"{datetime.now().astimezone().isoformat(timespec='seconds')} {message}\n"
-                )
-        except OSError:
-            pass
+                handle.write(f"{stamp} {message}\n")
+        except OSError as exc:
+            audit.report_write_failure(exc)
+        if structured:
+            log_event(
+                cfg,
+                audit.guess_level(message),
+                event or audit.guess_event(message),
+                message,
+            )
 
     return emit
 
@@ -54,7 +105,7 @@ def needs_rebuild(cfg: Config, result) -> bool:
     """只有**内容真的变了**才重建索引。
 
     此前 `refresh`/`ensure_fresh` 无条件调用 `build()` —— 哪怕同步到 0 个变更，
-    也会把整个索引删掉重建（本库 3.4 MB / 1300+ 块）。`dsh-kb` 是"按需调用的补充"，
+    也会把整个索引删掉重建（本库 3.4 MB / 1300+ 块）。`scheda` 是"按需调用的补充"，
     没变化时的刷新应当只是一次目录走查（实测 0.07 s），而不是一次全量重写。
     """
     if not cfg.index_db.exists():
@@ -119,7 +170,16 @@ def search_payload(
     snippet_chars: int | None = None,
     note: str = "",
     deep: bool = False,
+    transport: str = "cli",
+    audit: bool = True,
 ) -> dict:
+    """One search, as the CLI / MCP / web layer all want it.
+
+    ``transport`` only labels the audit record (``cli`` / ``mcp`` / ``web``);
+    it changes nothing about the search itself.  ``audit=False`` exists for
+    callers that run the same query twice (``search_with_refresh`` does) and
+    want one record, not two.
+    """
     result = search(
         cfg, query, zone=zone, limit=limit, snippet_chars=snippet_chars,
         fresh_seconds=cfg.stale_minutes * 60, deep=deep,
@@ -136,9 +196,14 @@ def search_payload(
         "note": " | ".join(x for x in (result.note, note) if x),
         "hits": [hit_dict(h) for h in result.hits],
     }
+    if audit:
+        # Metadata only — the audit trail must not become a side channel that
+        # hands back text from a zone the caller could not search.
+        audit_event(cfg, "search", zone=zone, query=query,
+                    hits=len(result.hits), transport=transport)
 
     # The passes below only run when the first one was weak, and each one is
-    # allowed to fail into "do nothing".  See dsh_kb.expansion for why.
+    # allowed to fail into "do nothing".  See scheda.expansion for why.
     from . import expansion
 
     fresh_seconds = cfg.stale_minutes * 60
@@ -207,22 +272,39 @@ def search_with_refresh(
     allow_refresh: bool = True,
     on_event=None,
     deep: bool = False,
+    transport: str = "cli",
 ) -> dict:
     """Search, refreshing first when the index looks stale.
 
     A failed refresh is reported in ``note`` but never prevents a result — that
     is what makes the mirror worth having.
     """
-    payload = search_payload(cfg, query, zone=zone, limit=limit, snippet_chars=snippet_chars, deep=deep)
+    payload = search_payload(cfg, query, zone=zone, limit=limit,
+                             snippet_chars=snippet_chars, deep=deep,
+                             transport=transport, audit=False)
     if payload["stale"] and allow_refresh:
         note = ensure_fresh(cfg, on_event=on_event)
         payload = search_payload(cfg, query, zone=zone, limit=limit,
-                                 snippet_chars=snippet_chars, note=note, deep=deep)
+                                 snippet_chars=snippet_chars, note=note, deep=deep,
+                                 transport=transport, audit=False)
+    # One record per call, whatever the refresh above did behind it.
+    audit_event(cfg, "search", zone=zone, query=query,
+                hits=len(payload["hits"]), transport=transport)
     return payload
 
 
-def read_payload(cfg: Config, rel: str, *, start: int = 1, lines: int = 80) -> dict:
+def read_payload(cfg: Config, rel: str, *, start: int = 1, lines: int = 80,
+                 transport: str = "cli", audit: bool = True) -> dict:
+    """One line window, as every layer wants it.
+
+    ``audit=False`` is for *internal* reads — query expansion opens pages to
+    build a better query, and recording those as "the user read this file" would
+    turn the audit trail into noise that hides the real accesses.
+    """
     result = read(cfg, rel, start=start, lines=lines)
+    if audit:
+        audit_event(cfg, "read", path=rel, transport=transport,
+                    lines=result.end - result.start + 1)
     return {
         "ok": True,
         "path": result.path,
@@ -429,11 +511,11 @@ def diff_payload(cfg: Config, *, incoming_threshold: float = INCOMING_STALE_SECO
     # ---- 本地状态先做形状检查：坏了就没法降级，直接 DiffUnavailable ----
     if cfg.home.exists() and not cfg.home.is_dir():
         raise DiffUnavailable(
-            f"home is not a directory: {cfg.home} — fix DSH_KB_HOME / --home")
+            f"home is not a directory: {cfg.home} — fix SCHEDA_HOME / --home")
     if cfg.mirror_dir.exists() and not cfg.mirror_dir.is_dir():
         raise DiffUnavailable(
             f"mirror path is not a directory: {cfg.mirror_dir} — move it aside and "
-            f"re-run `dsh-kb sync`")
+            f"re-run `scheda sync`")
     problem = manifest_problem(cfg)
     if problem:
         raise DiffUnavailable(f"snapshot manifest unusable: {problem}")
@@ -573,10 +655,12 @@ __all__ = [
     "CONFLICT_MARK",
     "DiffUnavailable",
     "INCOMING_STALE_SECONDS",
+    "audit_event",
     "diff_payload",
     "ensure_fresh",
     "file_logger",
     "hit_dict",
+    "log_event",
     "open_configured_source",
     "read_payload",
     "refresh",

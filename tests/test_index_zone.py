@@ -49,15 +49,15 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from dsh_kb import index  # noqa: E402
-from dsh_kb.config import Config  # noqa: E402
+from scheda import index  # noqa: E402
+from scheda.config import Config  # noqa: E402
 
 #: ``Config.chunk_lines`` default — the fixture must chunk the way production does.
 CHUNK_LINES = 15
 
-#: Optional live-index spot check.  Point ``DSH_KB_TEST_LIVE_DB`` at a real
+#: Optional live-index spot check.  Point ``SCHEDA_TEST_LIVE_DB`` at a real
 #: index to run it; without that variable (CI, fresh clone) the case skips.
-LIVE_DB = Path(os.environ["DSH_KB_TEST_LIVE_DB"]) if os.environ.get("DSH_KB_TEST_LIVE_DB") else None
+LIVE_DB = Path(os.environ["SCHEDA_TEST_LIVE_DB"]) if os.environ.get("SCHEDA_TEST_LIVE_DB") else None
 
 #: The pre-fix denominator: pages, not chunks.  Named so the counter-example
 #: reads as "the old query", not as a magic string.
@@ -222,7 +222,7 @@ class SelectiveTokensLiveCorpus(unittest.TestCase):
     """Read-only spot check against the real index; skips when it is unreadable.
 
     Never writes: opened ``mode=ro``, and the production rebuild commands are
-    deliberately not run here.  A concurrent ``dsh-kb index`` (another process
+    deliberately not run here.  A concurrent ``scheda index`` (another process
     rebuilds this file) can make a query fail mid-flight; that is reported as a
     skip, never as a failure — the point is to check the rule, not to fight over
     the file.

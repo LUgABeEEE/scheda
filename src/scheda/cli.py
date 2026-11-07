@@ -1,4 +1,5 @@
-"""Command line interface: ``dsh-kb <command>``.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Command line interface: ``scheda <command>``.
 
 Commands are grouped by whether they touch the network:
 
@@ -15,7 +16,7 @@ Commands are grouped by whether they touch the network:
   the source, the mirror or the index.
 
 Every command supports ``--json`` where a machine-readable result makes sense
-(the MCP server and the agent both consume it).  ``dsh-kb <command> --help``
+(the MCP server and the agent both consume it).  ``scheda <command> --help``
 lists the flags of each command; the README carries the same table.
 
 Command overview (the full flag list lives in ``--help``)::
@@ -49,7 +50,7 @@ from . import ragcheck, supersede
 from .config import Config, load_config, source_available
 from .index import build, index_age, read, search, stats
 from .mirror import manifest_age, mirror_files, mirror_size, sync
-from handrolled.mounts import describe_path
+from .platform_fs import describe_path
 from .service import (
     DiffUnavailable,
     diff_payload,
@@ -108,6 +109,127 @@ def _config(args) -> Config:
 # --------------------------------------------------------------------------- #
 # commands
 # --------------------------------------------------------------------------- #
+def _write_json_atomic(path: Path, payload: dict) -> None:
+    """Write config.json without ever leaving a half-written file behind."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+_INIT_README = """# scheda state directory
+
+`scheda` keeps everything derived from your bundle here — nothing in this
+directory is authoritative, and everything in it can be rebuilt from the source
+directory named in `config.json`.
+
+    config.json   what to read, where to cache, which zones are private
+    mirror/       a local copy of the bundle (never the source of truth)
+    index/        the SQLite FTS5 index (delete it and re-run `scheda index`)
+    logs/         text log, structured events, and the audit trail
+
+The privacy zones in `config.json` are enforced in code: a zone with
+`"mirror": false` is never copied here at all, so its text cannot leak through
+the mirror, the index, or a search result.
+
+Next: `scheda sync` → `scheda index` → `scheda search "keyword"`.
+"""
+
+
+def cmd_init(args) -> int:
+    """Lay out the home directory and write a config skeleton.
+
+    Deliberately pulls nothing: `init` is what a stranger runs before deciding
+    which source to point at, so it has to be safe on a machine that has no
+    share, no NAS and no credentials.  A second run refuses to overwrite an
+    existing `config.json` unless `--force` is passed — silently replacing a
+    working configuration is the kind of help nobody wants.
+    """
+    cfg = _config(args)
+    home = cfg.home
+    cfg_path = cfg.config_path if hasattr(cfg, "config_path") else home / "config.json"
+    if cfg_path.is_file() and not getattr(args, "force", False):
+        print(f"scheda: {cfg_path} already exists; nothing changed "
+              f"(pass --force to rewrite it)", file=sys.stderr)
+        return 3
+
+    created = []
+    for directory in (home, cfg.mirror_dir, cfg.index_db.parent, cfg.log_path.parent):
+        if not directory.exists():
+            directory.mkdir(parents=True, exist_ok=True)
+            created.append(str(directory))
+
+    payload: dict = {}
+    for key in ("source", "mount", "local_root", "smb_share", "webdav_root"):
+        value = getattr(args, key, None)
+        if value:
+            payload[key] = value
+    if not payload:
+        # `auto` tries mount → local → smbclient → webdav in that order, which is
+        # the right default when the caller has not decided yet.
+        payload["source"] = "auto"
+    _write_json_atomic(cfg_path, payload)
+
+    readme = home / "README.md"
+    if not readme.is_file():
+        readme.write_text(_INIT_README, encoding="utf-8")
+
+    kind, location = source_available(cfg)
+    result = {
+        "home": str(home),
+        "config": str(cfg_path),
+        "config_source": payload.get("source", "auto"),
+        "created": created,
+        "mirror": str(cfg.mirror_dir),
+        "index": str(cfg.index_db),
+        "logs": str(cfg.log_path.parent),
+        "source": {"kind": kind, "location": location,
+                   "available": bool(kind)},
+    }
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"scheda: initialized {home}")
+    print(f"  config   : {cfg_path}  (source={payload.get('source', 'auto')})")
+    print(f"  mirror   : {cfg.mirror_dir}")
+    print(f"  index    : {cfg.index_db}")
+    print(f"  logs     : {cfg.log_path.parent}")
+    if kind:
+        print(f"  source   : {kind} → {location}")
+    else:
+        print("  source   : not resolved yet — set `local_root`, `mount` or "
+              "`webdav_root` in config.json (or pass --local-root/--mount)")
+    print("next:")
+    print("  1. scheda sync           # copy the bundle into the local mirror")
+    print("  2. scheda index          # build the FTS5 index")
+    print('  3. scheda search "word"  # verify a hit, then wire the MCP server')
+    print("  4. scheda web            # optional read-only UI on 127.0.0.1:8765")
+    print("     MCP: scheda mcp  (stdio; see docs/agent-integration.md)")
+    return 0
+
+
+def cmd_web(args) -> int:
+    """Serve the read-only UI.
+
+    No page content is ever written; ``search`` and ``read`` still leave one
+    metadata-only record each in the audit trail (``logs/audit.jsonl``), which is
+    the whole point of having an audit trail.
+    """
+    try:
+        from . import webui
+    except ImportError:  # pragma: no cover - only in a stripped build
+        print("scheda: this build has no web UI module", file=sys.stderr)
+        return 4
+    if args.no_rewrite:
+        # A browser tab cannot wait out a 12-second local-model rewrite; the CLI
+        # default stays untouched because this switch is per process.
+        webui._disable_query_rewrite()
+    # The non-loopback warning lives in webui.serve(): one place, and it is
+    # printed even under --quiet.
+    webui.serve(_config(args), host=args.bind, port=args.port, quiet=args.quiet)
+    return 0
+
+
 def cmd_status(args) -> int:
     cfg = _config(args)
     kind, location = source_available(cfg)
@@ -140,7 +262,7 @@ def cmd_status(args) -> int:
     def age(value):
         return "never" if value is None else f"{value:.0f}s ago"
 
-    print(f"dsh-kb {__version__}")
+    print(f"scheda {__version__}")
     print(f"  home    : {cfg.home}")
     print(f"  source  : {kind or '—'}  {location}")
     if payload["source"].get("mountpoint"):
@@ -261,7 +383,7 @@ def cmd_read(args) -> int:
     try:
         payload = read_payload(cfg, args.path, start=args.start, lines=args.lines)
     except FileNotFoundError as exc:
-        _emit(f"dsh-kb: {exc}")
+        _emit(f"scheda: {exc}")
         return 2
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -306,7 +428,7 @@ def _append_push_receipt(cfg: Config, record: dict) -> None:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(line)
     except OSError as exc:
-        _emit(f"dsh-kb: cannot append push receipt to {path}: {exc} — "
+        _emit(f"scheda: cannot append push receipt to {path}: {exc} — "
               f"check that {path.parent} is writable")
 
 
@@ -485,19 +607,19 @@ def _push_show_log(cfg: Config, args) -> int:
     """``push --log [N]``：打印最近 N 条回执。"""
     limit = args.log if args.log is not None else 10
     if limit < 0:
-        _emit(f"dsh-kb: --log takes a non-negative count (got {limit})")
+        _emit(f"scheda: --log takes a non-negative count (got {limit})")
         return 1
     path = _push_log_path(cfg)
     if not path.is_file():
         if getattr(args, "json", False):
             print("[]")
         else:
-            _emit(f"dsh-kb: no push receipts yet ({path})")
+            _emit(f"scheda: no push receipts yet ({path})")
         return 0
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        _emit(f"dsh-kb: cannot read {path}: {exc} — check permissions on {path.parent}")
+        _emit(f"scheda: cannot read {path}: {exc} — check permissions on {path.parent}")
         return 1
 
     records, unparsable = [], 0
@@ -511,7 +633,7 @@ def _push_show_log(cfg: Config, args) -> int:
             # 半行只可能来自被中断的写入；跳过并说出来，不能让 --log 自己崩掉。
             unparsable += 1
     if unparsable:
-        _emit(f"dsh-kb: skipped {unparsable} unparsable line(s) in {path}")
+        _emit(f"scheda: skipped {unparsable} unparsable line(s) in {path}")
     tail = records[-limit:] if limit else []
     if getattr(args, "json", False):
         print(json.dumps(tail, ensure_ascii=False, indent=2))
@@ -519,9 +641,9 @@ def _push_show_log(cfg: Config, args) -> int:
     if not tail:
         if limit == 0 and records:
             # "no receipts" 会是假话 —— 账里有记录，只是被要求看 0 条。
-            _emit(f"dsh-kb: --log 0 shows nothing ({len(records)} receipts on file)")
+            _emit(f"scheda: --log 0 shows nothing ({len(records)} receipts on file)")
         else:
-            _emit(f"dsh-kb: no push receipts yet ({path})")
+            _emit(f"scheda: no push receipts yet ({path})")
         return 0
     print(f"--- last {len(tail)} of {len(records)} push receipts · {path} ---")
     for record in tail:
@@ -555,36 +677,36 @@ def cmd_push(args) -> int:
     cfg = _config(args)
     if args.log is not None:
         if args.files:
-            _emit("dsh-kb: --log only reads receipts — it cannot push files in the "
+            _emit("scheda: --log only reads receipts — it cannot push files in the "
                   "same call; run the two separately")
             return 1
         return _push_show_log(cfg, args)
 
     expect, expect_error = _normalise_expect(args.expect)
     if expect_error:
-        _emit(f"dsh-kb: {expect_error}")
+        _emit(f"scheda: {expect_error}")
         return 1
 
     source = open_configured_source(cfg)
     incoming = cfg.mirror_dir / "_incoming"
     # 这两种"没东西可推"是正常状态（调度器会按天跑），提示语与退出码保持原样。
     if not incoming.is_dir():
-        _emit("dsh-kb: mirror has no _incoming/ directory — nothing to push")
+        _emit("scheda: mirror has no _incoming/ directory — nothing to push")
         return 0
     names = args.files or sorted(p.name for p in incoming.iterdir() if p.is_file())
     if not names:
-        _emit("dsh-kb: _incoming/ is empty")
+        _emit("scheda: _incoming/ is empty")
         return 0
 
     if expect is not None and len(names) > 1:
         # 一个哈希对多个文件没有意义；静默选取哪一个都等于没校验。
         shown = ", ".join(names[:3]) + ("…" if len(names) > 3 else "")
-        _emit(f"dsh-kb: --expect only works with a single file (got {len(names)}: {shown}) — "
+        _emit(f"scheda: --expect only works with a single file (got {len(names)}: {shown}) — "
               f"verify them one by one, otherwise the check is meaningless")
         return 1
 
     if not hasattr(source, "write"):
-        _emit(f"dsh-kb: source {getattr(source, 'label', '?')} is read-only")
+        _emit(f"scheda: source {getattr(source, 'label', '?')} is read-only")
         return 2
     # ---- R1 提案闸门：写之前拦，且一次报全（不要挤牙膏式一个个报） ----
     if not args.allow_undeclared:
@@ -602,15 +724,15 @@ def cmd_push(args) -> int:
                 blocked.append((name, verdict))
         if blocked:
             for name, verdict in blocked:
-                _emit(f"dsh-kb: 提案闸门拦下 {name} —— {verdict['reason']}")
-            _emit(f"dsh-kb: {len(blocked)} 份提案与现行页撞题却没声明 ⇒ 一份都没推。"
+                _emit(f"scheda: 提案闸门拦下 {name} —— {verdict['reason']}")
+            _emit(f"scheda: {len(blocked)} 份提案与现行页撞题却没声明 ⇒ 一份都没推。"
                   f"补 supersedes:/not_superseding: 后重试；确认无关可用 --allow-undeclared")
             return 1
 
     mount = getattr(source, "mount", None) or {}
     if mount.get("readonly"):
         # 提前一次性拒绝，比逐个文件在 write 里失败更好懂（doctor 也报同一条）。
-        _emit(f"dsh-kb: source {getattr(source, 'label', '?')} is a read-only mount "
+        _emit(f"scheda: source {getattr(source, 'label', '?')} is a read-only mount "
               f"({mount.get('mountpoint')}) — remount it rw, or push via another "
               f"source (e.g. --source webdav)")
         return 2
@@ -642,7 +764,7 @@ def cmd_skills_search(args) -> int:
                              verdict=args.verdict, risky_only=args.risky,
                              cfg=_config(args))
     except SkillsUnavailable as exc:
-        print(f"dsh-kb: {exc}", file=sys.stderr)
+        print(f"scheda: {exc}", file=sys.stderr)
         return 2
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=1))
@@ -669,7 +791,7 @@ def cmd_skills_show(args) -> int:
     try:
         rel, text = read_skill(args.name, lines=args.lines, cfg=_config(args))
     except SkillsUnavailable as exc:
-        print(f"dsh-kb: {exc}", file=sys.stderr)
+        print(f"scheda: {exc}", file=sys.stderr)
         return 2
     print(f"# {rel}\n")
     print(text)
@@ -683,7 +805,7 @@ def cmd_skills_stats(args) -> int:
     try:
         info = skills_stats(cfg=_config(args))
     except SkillsUnavailable as exc:
-        print(f"dsh-kb: {exc}", file=sys.stderr)
+        print(f"scheda: {exc}", file=sys.stderr)
         return 2
     print(f"library : {info['library']}")
     print(f"count   : {info['count']} skills · {info['bytes'] / 1048576:.1f} MB")
@@ -718,7 +840,7 @@ def cmd_doctor(args) -> int:
     uses it as one): two writability probes are performed on every run —
 
     * ``_writable(home)``: ``mkdir -p`` the home directory if missing, then
-      create and delete ``<home>/.dsh-kb-write-probe``;
+      create and delete ``<home>/.scheda-write-probe``;
     * ``source.probe_writable("_incoming")``: when the source exposes it, write
       and delete a probe file under ``_incoming/`` on the **share** (needed to
       answer "can ``push`` work at all?").
@@ -777,7 +899,7 @@ def cmd_doctor(args) -> int:
     if not ragcheck.enabled(cfg):
         add("rag consistency", "warn",
             f"absent — no vector store at {rag_vectors} "
-            f"(set DSH_KB_RAG_VECTORS_DB, or build the vectors)")
+            f"(set SCHEDA_RAG_VECTORS_DB, or build the vectors)")
     else:
         try:
             rag = ragcheck.check(cfg)
@@ -845,7 +967,7 @@ def cmd_doctor(args) -> int:
 def _writable(path: Path) -> bool:
     import os
 
-    probe = path / ".dsh-kb-write-probe"
+    probe = path / ".scheda-write-probe"
     try:
         path.mkdir(parents=True, exist_ok=True)
         probe.write_text("", encoding="utf-8")
@@ -930,7 +1052,7 @@ def _describe_gap(mark: str, item: dict) -> str:
 def _emit_diff(payload: dict) -> None:
     """人读版 diff：每组一小节，异常组后面直接跟"下一步做什么"。"""
     src = payload["source"]
-    print(f"dsh-kb diff · {payload['home']}")
+    print(f"scheda diff · {payload['home']}")
     print(f"  源     : {src['kind'] or '—'} {src['location']}  "
           f"[{'可用' if src['available'] else '不可用'}]")
     if src["note"]:
@@ -973,7 +1095,7 @@ def _emit_diff(payload: dict) -> None:
                 print(f"    {mark} {name} {total} 个{tail}")
                 for item in items:
                     print(f"        {_describe_change(mark, item)}")
-        print("  提示：内容差异本身不算异常，下一次 `dsh-kb sync` 就会收敛")
+        print("  提示：内容差异本身不算异常，下一次 `scheda sync` 就会收敛")
 
     # 2. 镜像副本（本地 vs 快照）：t7 盲点 B —— 删掉已同步的文件必须看得见
     gaps = payload["mirror_gaps"]
@@ -1001,9 +1123,9 @@ def _emit_diff(payload: dict) -> None:
                 print(f"     {hint}")
 
         _gap_block("removed", "-", "本地缺文件（快照里有、镜像里没有）",
-                   "建议：`dsh-kb sync` 会把这些文件补回来")
+                   "建议：`scheda sync` 会把这些文件补回来")
         _gap_block("changed", "~", "本地文件大小与快照不符（可能被截断/改坏）",
-                   "建议：`dsh-kb sync --full`（增量 sync 认为远端没变，不会重取）")
+                   "建议：`scheda sync --full`（增量 sync 认为远端没变，不会重取）")
         _gap_block("added", "+", "本地多出文件（快照与源都不认识）",
                    "建议：确认无用后手工删除 —— `sync --prune` 只删「快照有、远端没有」"
                    "的文件，删不掉这些")
@@ -1016,11 +1138,11 @@ def _emit_diff(payload: dict) -> None:
         print(f"  ok 还没有索引，镜像里也没有可索引的 .md（{idx['path']}）")
     elif not idx["present"]:
         print(f"  !! 索引不存在：{idx['path']}")
-        print(f"     建议：`dsh-kb index` 建一次（镜像里现有 {idx['mirror_pages']} 个可索引 .md）")
+        print(f"     建议：`scheda index` 建一次（镜像里现有 {idx['mirror_pages']} 个可索引 .md）")
     elif idx["drift"]:
         print(f"  !! 漂移：索引 meta 里 {idx['meta_paths']} 个路径，镜像里可索引 .md "
               f"{idx['mirror_pages']} 个（索引 {_fmt_age(idx['age_seconds'])}前）")
-        print("     建议：`dsh-kb index` 重建（或 `dsh-kb refresh` 同步+重建一次）")
+        print("     建议：`scheda index` 重建（或 `scheda refresh` 同步+重建一次）")
     else:
         print(f"  ok 一致：{idx['meta_paths']} 个路径，索引 {_fmt_age(idx['age_seconds'])}前")
 
@@ -1035,7 +1157,7 @@ def _emit_diff(payload: dict) -> None:
     elif inc["stale"]:
         print(f"  !! {inc['files']} 份提案，最老的一份 {_fmt_age(inc['oldest_seconds'])}前"
               f"（{inc['oldest']}）")
-        print(f"     建议：`dsh-kb read {inc['oldest']}` 看内容，转正到 z0/z1 或删掉")
+        print(f"     建议：`scheda read {inc['oldest']}` 看内容，转正到 z0/z1 或删掉")
     else:
         print(f"  ok {inc['files']} 份提案，最老的一份 {_fmt_age(inc['oldest_seconds'])}前（阈值内）")
 
@@ -1066,14 +1188,14 @@ def _emit_diff(payload: dict) -> None:
                    else "不是 sync 放进来的（手工拷贝？）")
             print(f"      {item['path']}  {_fmt_bytes(item['bytes'])}  {why}")
         print("     建议：确认无用后删掉；若是策略误伤，改 config.json 的 zones/never 再 "
-              "`dsh-kb sync --prune`")
+              "`scheda sync --prune`")
 
     # 结论
     attention = payload["attention"]
     if not src["available"] and "source-unavailable" not in attention:
         # 全新 home + 没有源：没有快照可对比，也就没有"差异"可报。配置问题由
         # doctor 负责喊（它返回 1），这里说清楚为什么不重复报警。
-        print("\n注：源不可用，但本地还没有任何快照/镜像 —— 配置问题请跑 `dsh-kb doctor`"
+        print("\n注：源不可用，但本地还没有任何快照/镜像 —— 配置问题请跑 `scheda doctor`"
               "（它返回 1），这里不重复报警")
     if attention:
         names = "、".join(ATTENTION_LABELS.get(code, code) for code in attention)
@@ -1111,10 +1233,10 @@ def cmd_diff(args) -> int:
     try:
         payload = diff_payload(cfg, incoming_threshold=threshold)
     except DiffUnavailable as exc:
-        print(f"dsh-kb: {exc}", file=sys.stderr)
+        print(f"scheda: {exc}", file=sys.stderr)
         return 11
     except Exception as exc:  # noqa: BLE001 - 诊断命令不该以 traceback 收场
-        print(f"dsh-kb: diff failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"scheda: diff failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 11
 
     if args.json:
@@ -1137,13 +1259,13 @@ def cmd_supersede_check(args) -> int:
     if args.proposal:
         target = Path(args.proposal)
         if not target.is_file():
-            _emit(f"dsh-kb: 找不到提案文件：{target}")
+            _emit(f"scheda: 找不到提案文件：{target}")
             return 2
         rel = target.name
         try:
             raw = target.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
-            _emit(f"dsh-kb: 读不了 {target}: {exc}")
+            _emit(f"scheda: 读不了 {target}: {exc}")
             return 2
         verdict = supersede.gate(cfg, rel, raw)
         if args.json:
@@ -1168,7 +1290,7 @@ def cmd_supersede_check(args) -> int:
 # --------------------------------------------------------------------------- #
 #: 嵌入端点默认是本地 ollama。doctor 只做一次极短探测：不可达意味着"能查、
 #: 但暂时不能重建向量"，那是 warn 不是 fail。
-#: 设 DSH_KB_RAG_OLLAMA=- 可跳过探测（没有 ollama 的机器/离线测试）。
+#: 设 SCHEDA_RAG_OLLAMA=- 可跳过探测（没有 ollama 的机器/离线测试）。
 RAG_OLLAMA_ENDPOINT = "http://127.0.0.1:11434"
 RAG_OLLAMA_TIMEOUT = 0.5
 
@@ -1178,7 +1300,7 @@ def _ollama_reachable(endpoint: str | None = None) -> tuple[bool, str]:
     import os
     import urllib.request
 
-    url = (endpoint or os.environ.get("DSH_KB_RAG_OLLAMA") or RAG_OLLAMA_ENDPOINT).rstrip("/")
+    url = (endpoint or os.environ.get("SCHEDA_RAG_OLLAMA") or RAG_OLLAMA_ENDPOINT).rstrip("/")
     if url in ("", "-"):
         return True, "skipped"
     try:
@@ -1198,7 +1320,7 @@ def _emit_rag_check(payload: dict) -> None:
     if payload["store_missing"]:
         print("  !! 向量库不存在")
         print("     建议：用你自己的向量构建器生成（见 docs/semantic-arm.md），"
-              "或把 DSH_KB_RAG_VECTORS_DB 指到真实的 vectors.sqlite")
+              "或把 SCHEDA_RAG_VECTORS_DB 指到真实的 vectors.sqlite")
     else:
         print(f"  索引 chunks（meta 行数）: {payload['chunks']}")
         print(f"  向量行数               : {payload['vectors']}")
@@ -1265,14 +1387,14 @@ def _emit_rag_check(payload: dict) -> None:
 #: 拒绝原因 → 解锁方式。拒绝必须告诉人怎么继续，否则下一个人只会绕过整条命令。
 PRUNE_UNLOCK = {
     ragcheck.REFUSED_EXTERNAL:
-        "把 DSH_KB_RAG_VECTORS_DB 指到 home 里的向量库；确实要操作外部库就显式设 "
+        "把 SCHEDA_RAG_VECTORS_DB 指到 home 里的向量库；确实要操作外部库就显式设 "
         "rag.allow_external_vectors_db=true（外部库仍受 50% 大批量保护）",
     ragcheck.REFUSED_BULK:
         "先确认 home 与 vectors_db 是同一个知识库，再带 --force 重跑",
     ragcheck.REFUSED_EMPTY_HOME:
-        "先 `dsh-kb index` 建出索引；确认无误后也可以带 --force",
+        "先 `scheda index` 建出索引；确认无误后也可以带 --force",
     ragcheck.REFUSED_INDEX:
-        "先 `dsh-kb index` 重建索引（索引读不出来时没有任何可比对的对照面）",
+        "先 `scheda index` 重建索引（索引读不出来时没有任何可比对的对照面）",
     ragcheck.REFUSED_IDENTITY:
         "两侧块身份不一致（一侧还是 (path, startline)，另一侧已是 chunk_id）；"
         "先完成 CAS 迁移重建向量库，再重试 —— 跨身份比对会把每一行都判成孤儿",
@@ -1309,7 +1431,7 @@ def cmd_import(args) -> int:
     # records renders the same bytes and writes nothing.  --as-of exists for the
     # case where a page really should record a date.
     at = args.as_of or ""
-    generator = f"dsh-kb import/{args.format}"
+    generator = f"scheda import/{args.format}"
     try:
         records = load_records(args.format, Path(args.source_path), wikilinks=args.wikilinks)
         planned = importer_mod.plan(
@@ -1323,7 +1445,7 @@ def cmd_import(args) -> int:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
         else:
-            _emit(f"dsh-kb: {exc}")
+            _emit(f"scheda: {exc}")
         return 1
 
     try:
@@ -1334,7 +1456,7 @@ def cmd_import(args) -> int:
             print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
                              ensure_ascii=False, indent=2))
         else:
-            _emit(f"dsh-kb: 源不可用或写入失败：{exc}")
+            _emit(f"scheda: 源不可用或写入失败：{exc}")
         return 11
 
     payload = {
@@ -1361,7 +1483,7 @@ def cmd_import(args) -> int:
               + (f" · failed {outcome.failed}" if outcome.failed else "") + ")")
         print(f"  mode    : {mode}")
         if args.write and outcome.written:
-            print("  next    : dsh-kb refresh   # mirror + index the new pages")
+            print("  next    : scheda refresh   # mirror + index the new pages")
     return 0 if outcome.failed == 0 else 10
 
 
@@ -1407,7 +1529,7 @@ def cmd_rag_check(args) -> int:
     cfg = _config(args)
     if args.force and not (args.prune or args.prune_chunks):
         # --force 只影响"真删"；单独用它说明调用方以为自己能强制什么，其实什么都没发生。
-        _emit("dsh-kb: --force 只在 --prune / --prune-chunks 时有意义"
+        _emit("scheda: --force 只在 --prune / --prune-chunks 时有意义"
               "（它解的是大批量/空索引两道保护）")
         return 1
     try:
@@ -1424,7 +1546,7 @@ def cmd_rag_check(args) -> int:
             # 真删过就再取一次状态：输出的是"现在的样子"，删了多少另由 prune 说明。
             report = ragcheck.check(cfg)
     except Exception as exc:  # noqa: BLE001 - 诊断命令不该以 traceback 收场
-        print(f"dsh-kb: rag-check failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"scheda: rag-check failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 11
 
     vectors_path = ragcheck.vectors_db(cfg)
@@ -1479,7 +1601,7 @@ def _add_common_flags(parser: argparse.ArgumentParser, *, suppress: bool) -> Non
     """Attach the flags shared by every command.
 
     They are declared on both the root parser and every sub-parser so that
-    ``dsh-kb --json search x`` and ``dsh-kb search x --json`` both work.  On the
+    ``scheda --json search x`` and ``scheda search x --json`` both work.  On the
     sub-parsers the default is ``SUPPRESS`` so an omitted flag does not overwrite
     the value the root parser already stored.
     """
@@ -1504,11 +1626,11 @@ def _add_common_flags(parser: argparse.ArgumentParser, *, suppress: bool) -> Non
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="dsh-kb",
+        prog="scheda",
         description="A personal Markdown knowledge base with a local mirror and index, "
                     "built to be queried cheaply by AI agents.",
     )
-    parser.add_argument("--version", action="version", version=f"dsh-kb {__version__}")
+    parser.add_argument("--version", action="version", version=f"scheda {__version__}")
     _add_common_flags(parser, suppress=False)
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -1516,6 +1638,11 @@ def build_parser() -> argparse.ArgumentParser:
         child = sub.add_parser(name, help=help_text, parents=[])
         _add_common_flags(child, suppress=True)
         return child
+
+    p = command("init", "create the state directory and a config skeleton")
+    p.add_argument("--force", action="store_true",
+                   help="rewrite an existing config.json (default: refuse)")
+    p.set_defaults(func=cmd_init)
 
     command("status", "show configuration, mirror and index state").set_defaults(func=cmd_status)
     command("doctor", "probe the environment and report problems").set_defaults(func=cmd_doctor)
@@ -1587,6 +1714,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     command("mcp", "run the MCP server on stdio (for agent hosts)").set_defaults(func=cmd_mcp)
 
+    p = command("web", "read-only web UI: status, search and read (localhost by default)")
+    p.add_argument("--bind", default="127.0.0.1", metavar="HOST",
+                   help="interface to listen on (default 127.0.0.1; there is no auth)")
+    p.add_argument("--port", type=int, default=8765, metavar="PORT",
+                   help="port to listen on (default 8765)")
+    p.add_argument("--no-rewrite", action="store_true",
+                   help="skip the optional local-model query rewrite "
+                        "(a page must not hang for 12 s)")
+    p.set_defaults(func=cmd_web)
+
     p = command("refresh", "sync + index (what a scheduler should call)")
     p.add_argument("--prune", action="store_true")
     p.add_argument("--full", action="store_true", help="re-fetch everything, ignoring the manifest")
@@ -1652,10 +1789,10 @@ def main(argv: list[str] | None = None) -> int:
         return args.func(args)
     except SourceError as exc:
         # Every source problem already reads as a sentence an operator can act on.
-        print(f"dsh-kb: {exc}", file=sys.stderr)
+        print(f"scheda: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:  # pragma: no cover - interactive only
-        print("dsh-kb: interrupted", file=sys.stderr)
+        print("scheda: interrupted", file=sys.stderr)
         return 130
 
 

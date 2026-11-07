@@ -1,4 +1,5 @@
-"""dsh-kb — a personal knowledge base that AI agents can query cheaply.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""scheda — a personal knowledge base that AI agents can query cheaply.
 
 Design in one line
 ------------------
@@ -11,6 +12,6 @@ Nothing in this package assumes a particular vendor or path: everything
 machine-specific lives in a config file outside the checkout.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.9.0"
 
 __all__ = ["__version__"]

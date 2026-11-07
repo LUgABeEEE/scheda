@@ -12,16 +12,22 @@ feeling.
       official `mcp` release.
 - [ ] No skipped test explains away a real gap (the interop test skipping
       locally is fine; it must run in CI).
-- [ ] `dsh-kb doctor` and `dsh-kb mcp` verified by hand on a machine that has
+- [ ] `scheda doctor` and `scheda mcp` verified by hand on a machine that has
       never run this code.
 
 **Zero-friction promise**
 
-- [ ] Quickstart in `README.md` works on a clean machine with **no**
-      `pip install` — clone, run the tests, run the CLI.
-- [ ] `pip install .` builds a wheel with no `Requires-Dist` entries.
+- [ ] Quickstart in `README.md` works on a clean machine both ways:
+      `pip install scheda` from PyPI, and clone → install the one dependency →
+      run the tests.
+- [ ] `pip install .` builds a wheel whose `Requires-Dist` is exactly
+      `handrolled>=0.1.1` and nothing else (one dependency, no compiled
+      extensions). `tests/test_packaging.py` asserts that shape.
 - [ ] The console script works from the installed wheel, not just from a
       checkout.
+- [ ] `python3 -m build` twice in a row, with the same `SOURCE_DATE_EPOCH`,
+      produces byte-identical wheels (`SOURCE_DATE_EPOCH` is set by the publish
+      workflow).
 
 **Privacy and secrets**
 
@@ -44,7 +50,7 @@ feeling.
 **Repository hygiene**
 
 - [ ] `CHANGELOG.md` has an entry for the release, and the version in
-      `dsh_kb.__version__` matches the tag.
+      `scheda.__version__` matches the tag.
 - [ ] Branch protection on `main` requires the CI jobs.
 - [ ] Description, topics and licence are set on the host.
 - [ ] Issue and pull-request templates exist; `SECURITY.md` explains private
@@ -63,7 +69,7 @@ feeling.
 
 ```bash
 # 1) version + changelog agree
-$EDITOR src/dsh_kb/__init__.py CHANGELOG.md
+$EDITOR src/scheda/__init__.py CHANGELOG.md
 
 # 2) the suite, from a clean checkout
 python -m unittest discover -s tests -t . -v
@@ -71,14 +77,14 @@ python -m unittest discover -s tests -t . -v
 # 3) a real wheel, installed into a throwaway venv
 python -m pip wheel --no-deps . -w /tmp/whl
 python -m venv /tmp/venv && /tmp/venv/bin/pip install /tmp/whl/*.whl
-/tmp/venv/bin/dsh-kb --version
+/tmp/venv/bin/scheda --version
 
 # 4) tag and push
-git tag -a v0.1.0 -m "dsh-kb 0.1.0"
+git tag -a v0.1.0 -m "scheda 0.1.0"
 git push --follow-tags
 
 # 5) publish the release, turning the changelog section into the notes
-gh release create v0.1.0 --title "dsh-kb 0.1.0" --notes-file CHANGELOG.md
+gh release create v0.1.0 --title "scheda 0.1.0" --notes-file CHANGELOG.md
 ```
 
 ## Going public
@@ -87,11 +93,11 @@ gh release create v0.1.0 --title "dsh-kb 0.1.0" --notes-file CHANGELOG.md
 
 ```bash
 # 1) publish from a fresh repository so nothing unreachable ships with it
-gh repo create <owner>/dsh-kb --public --source=. --remote=origin --push \
+gh repo create <owner>/scheda --public --source=. --remote=origin --push \
   --description "A personal Markdown knowledge base with a local mirror and index, built to be queried cheaply by AI agents."
 
 # 2) verify what the world can reach: the branch history AND its size
-gh api repos/<owner>/dsh-kb/commits --jq '.[].sha' | wc -l
+gh api repos/<owner>/scheda/commits --jq '.[].sha' | wc -l
 ```
 
 Why recreate instead of `--visibility public`: **a force-push does not delete

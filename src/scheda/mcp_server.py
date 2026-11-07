@@ -1,9 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A Model Context Protocol server over stdio — standard library only.
 
 Why hand-rolled instead of depending on the official SDK:
 
-* dsh-kb advertises **zero runtime dependencies**, which keeps installation and
-  upgrades boring;
+* scheda advertises **one runtime dependency and no compiled extensions**
+  (`handrolled`, which is pure stdlib) — a hand-rolled server keeps the MCP
+  surface itself free of any third-party SDK, so installation and upgrades stay
+  boring;
 * the surface an agent actually needs is tiny — ``initialize``, ``tools/list``
   and ``tools/call`` over newline-delimited JSON-RPC 2.0;
 * an SDK would make its release cadence our users' problem.
@@ -21,7 +24,7 @@ Transport rules that matter
 * tool failures are returned *inside* the result (``isError: true``) rather than
   as JSON-RPC errors, so the model can read and react to them.
 
-Run it with ``dsh-kb mcp`` or ``python -m dsh_kb mcp``.
+Run it with ``scheda mcp`` or ``python -m scheda mcp``.
 """
 from __future__ import annotations
 
@@ -32,7 +35,7 @@ from .config import Config, load_config
 from .service import file_logger, read_payload, search_with_refresh, status_payload
 from .sources import SourceError
 
-SERVER_NAME = "dsh-kb"
+SERVER_NAME = "scheda"
 #: Newest first.  The handshake echoes the client's version when it is known.
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
@@ -212,6 +215,7 @@ def call_tool(cfg: Config, name: str, arguments: dict | None) -> tuple[str, bool
                                   minimum=60, maximum=800, default=cfg.snippet_chars),
             on_event=file_logger(cfg),
             deep=bool(arguments.get("deep")),
+            transport="mcp",
         )
         return json.dumps(payload, ensure_ascii=False), False
 
@@ -225,6 +229,7 @@ def call_tool(cfg: Config, name: str, arguments: dict | None) -> tuple[str, bool
             start=_as_int(arguments.get("start"), "start", minimum=1, maximum=1_000_000, default=1),
             lines=_as_int(arguments.get("lines"), "lines", minimum=1,
                           maximum=cfg.max_read_lines, default=80),
+            transport="mcp",
         )
         return json.dumps(payload, ensure_ascii=False), False
 

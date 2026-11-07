@@ -1,13 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Configuration and zone policy.
 
 Precedence (highest wins)
 -------------------------
 1. explicit keyword arguments (what the CLI parsed)
-2. environment variables (``DSH_KB_*``)
+2. environment variables (``SCHEDA_*``)
 3. ``<home>/config.json``
 4. built-in defaults
 
-``home`` defaults to ``~/.dsh-kb`` and holds **state only** (mirror, index,
+``home`` defaults to ``~/.scheda`` and holds **state only** (mirror, index,
 manifest, logs, config).  It is deliberately separate from the code checkout:
 a public clone therefore never carries personal paths or private data.
 """
@@ -33,7 +34,7 @@ DEFAULT_NEVER: tuple[str, ...] = (
 )
 
 #: Path fragments excluded from the **index only** — still mirrored, still readable
-#: with ``dsh-kb read``, just not searchable.  Deliberately separate from ``never``,
+#: with ``scheda read``, just not searchable.  Deliberately separate from ``never``,
 #: which also governs the mirror: reusing it for "process artifacts I do not want to
 #: *search*" would make the next ``sync --prune`` delete the local copies, and that
 #: is a different decision with a different blast radius.
@@ -58,12 +59,12 @@ META_DIR = "_meta"
 INCOMING_DIR = "_incoming"
 
 #: RAG / vector-store settings.  The embeddings are produced outside this repo,
-#: but dsh-kb has to know where the store lives, which model produced it and its
+#: but scheda has to know where the store lives, which model produced it and its
 #: dimension — otherwise "the vector row no longer matches the page" is
-#: undetectable.  Overridable per machine via ``DSH_KB_RAG_*``.
+#: undetectable.  Overridable per machine via ``SCHEDA_RAG_*``.
 #: Empty means "under ``<home>/index/vectors.sqlite``", resolved at load time so
 #: a public clone never carries a machine-specific path.  Point it elsewhere (or
-#: set ``DSH_KB_RAG_VECTORS_DB``) when the store lives outside ``home``.
+#: set ``SCHEDA_RAG_VECTORS_DB``) when the store lives outside ``home``.
 DEFAULT_RAG_VECTORS_DB = ""
 DEFAULT_RAG_MODEL = "bge-m3"
 DEFAULT_RAG_DIM = 1024
@@ -89,7 +90,7 @@ def normalise_chunk_strategy(value) -> str:
     *safe* direction on purpose: ``structural`` changes every ``chunk_id`` and
     therefore demands a full re-embed, so a misspelt value must never switch it
     on by accident.  ``load_config`` additionally reports the bad value through
-    ``unknown_keys`` (visible in ``dsh-kb doctor``) so the typo is not silent.
+    ``unknown_keys`` (visible in ``scheda doctor``) so the typo is not silent.
     """
     text = str(value if value is not None else "").strip().lower()
     return text if text in CHUNK_STRATEGIES else DEFAULT_CHUNK_STRATEGY
@@ -111,7 +112,7 @@ class RagConfig:
     counts as present exactly when the vector store file exists, so a machine
     that never built vectors reports the RAG side as *absent* instead of
     *broken*.  An explicit ``True``/``False`` (config file or
-    ``DSH_KB_RAG_ENABLED``) overrides that probe.
+    ``SCHEDA_RAG_ENABLED``) overrides that probe.
     """
 
     vectors_db: str = DEFAULT_RAG_VECTORS_DB
@@ -138,7 +139,7 @@ class RagConfig:
     hyde_enabled: bool = False   # 2026-10-23 实测：+1 题但 p95 15.8s（本地 7B CPU），默认关
     #: cross-encoder 重排：只在弱命中时对候选交叉打分。
     #: 默认关闭 —— 它要 onnxruntime + tokenizers 和约 280 MB 模型（见 docs/semantic-arm.md），
-    #: 打开前先设 DSH_KB_RERANK_ROOT。关闭时与纯 FTS5 逐字节一致。
+    #: 打开前先设 SCHEDA_RERANK_ROOT。关闭时与纯 FTS5 逐字节一致。
     rerank_enabled: bool = False   # 一次 33 题评测：+1 题，top8+len192 时 p95 359ms
     rerank_topn: int = 8
     rerank_max_length: int = 192
@@ -172,7 +173,7 @@ class RagConfig:
     deep_enabled: bool = False
     deep_candidates: int = 40
     deep_pick: int = 3
-    #: 深排用的模型名：与 DSH_KB_DEEP_ENDPOINT 指向的 OpenAI-compatible 服务一致。
+    #: 深排用的模型名：与 SCHEDA_DEEP_ENDPOINT 指向的 OpenAI-compatible 服务一致。
     deep_model: str = ""
     deep_timeout_s: float = 25.0
     deep_passage_chars: int = 340
@@ -349,7 +350,7 @@ def _coerce_zones(raw) -> tuple[Zone, ...]:
 
 
 #: rag 配置既接受嵌套写法 ``"rag": {"vectors_db": ...}``，也接受扁平写法
-#: ``"rag_vectors_db": ...``（和环境变量 DSH_KB_RAG_* 同名，方便照抄）。
+#: ``"rag_vectors_db": ...``（和环境变量 SCHEDA_RAG_* 同名，方便照抄）。
 _RAG_FIELDS = ("vectors_db", "model", "dim", "enabled",
                "allow_external_vectors_db", "vector_enabled", "vector_mode", "vector_trigger", "vector_weak_cov", "vector_weak_reserve", "vector_weak_ratio", "hyde_enabled", "hyde_model", "hyde_prompt_tokens", "rerank_enabled", "rerank_topn", "rerank_max_length", "rerank_passage_chars", "rerank_page_agg", "rerank_title_boost", "rerank_two_stage", "rerank_stage2_maxlen", "rerank_stage2_chars", "rerank_max_shift", "rerank_shift_pool", "deep_enabled", "deep_candidates", "deep_pick", "deep_model", "deep_timeout_s", "deep_passage_chars", "d2q_enabled", "vector_depth", "rerank_always", "vector_always", "vector_rrf_kw_weight", "vector_rrf_vec_weight",
                # 图片侧车（P2）：收进 _RAG_FIELDS 才能「只写 config.json」生效。
@@ -410,6 +411,39 @@ def _coerce_rag(data: dict) -> tuple[dict, list[str]]:
     return values, unknown
 
 
+#: 改名（0.9.0）之后，老部署的 systemd unit / compose / shell profile 里仍是这套
+#: 前缀。静默忽略它们会让工具指向另一个 bundle —— 正是改名最不该引入的那类 bug。
+_LEGACY_ENV_PREFIX = "DSH_KB_"
+
+
+def _env(name: str, default: str | None = None) -> str | None:
+    """Read ``SCHEDA_<name>``, falling back to ``DSH_KB_<name>``.
+
+    New name wins; the old one keeps working for every deployment that was
+    configured before the rename, without anyone editing a unit file.
+    """
+    value = os.environ.get("SCHEDA_" + name)
+    if not value:
+        value = os.environ.get(_LEGACY_ENV_PREFIX + name)
+    return value or default
+
+
+def default_home() -> str:
+    """The state directory, without silently relocating an upgraded deployment.
+
+    If ``~/.scheda`` does not exist yet but ``~/.dsh-kb`` does, the old path is
+    used: an upgrade must not look like "my knowledge base is gone".  Moving is
+    explicit — see ``docs/naming.md``.
+    """
+    explicit = _env("HOME")
+    if explicit:
+        return explicit
+    new, old = Path("~/.scheda").expanduser(), Path("~/.dsh-kb").expanduser()
+    if not new.exists() and old.is_dir():
+        return "~/.dsh-kb"
+    return "~/.scheda"
+
+
 def load_config(**overrides) -> Config:
     """Build a :class:`Config` from env + config file + defaults.
 
@@ -419,13 +453,11 @@ def load_config(**overrides) -> Config:
     # `home` decides where config.json is read from, so it has to be resolved
     # *before* the file is loaded. It used to be resolved from the environment
     # only, with overrides applied at the end — so `--home X` relocated the
-    # state directory but kept reading `~/.dsh-kb/config.json`, silently
+    # state directory but kept reading `~/.scheda/config.json`, silently
     # falling back to the built-in zones and `never` list. Measured on a real
     # deployment: three `never` exclusions and every zone's `inject` flag were
     # ignored, and the exclusions are a privacy guard.
-    home = Path(
-        overrides.get("home") or os.environ.get("DSH_KB_HOME", "~/.dsh-kb")
-    ).expanduser()
+    home = Path(overrides.get("home") or default_home()).expanduser()
     data: dict = {}
     cfg_path = home / "config.json"
     if cfg_path.is_file():
@@ -435,29 +467,29 @@ def load_config(**overrides) -> Config:
             data = {}
 
     env_map = {
-        "source": "DSH_KB_SOURCE",
-        "local_root": "DSH_KB_LOCAL_ROOT",
-        "mount": "DSH_KB_MOUNT",
-        "smb_share": "DSH_KB_SMB_SHARE",
-        "webdav_root": "DSH_KB_WEBDAV_ROOT",
-        "webdav_repo": "DSH_KB_WEBDAV_REPO",
+        "source": "SOURCE",
+        "local_root": "LOCAL_ROOT",
+        "mount": "MOUNT",
+        "smb_share": "SMB_SHARE",
+        "webdav_root": "WEBDAV_ROOT",
+        "webdav_repo": "WEBDAV_REPO",
         # 分块策略是字符串，走这张「env 覆盖文件」的表；数值项在下面的 cast 循环里。
-        "chunk_strategy": "DSH_KB_CHUNK_STRATEGY",
+        "chunk_strategy": "CHUNK_STRATEGY",
     }
     for key, env in env_map.items():
-        if os.environ.get(env):
-            data[key] = os.environ[env]
+        if _env(env):
+            data[key] = _env(env) or ""
     for key, env, cast in (
-        ("stale_minutes", "DSH_KB_STALE_MINUTES", int),
-        ("snippet_chars", "DSH_KB_SNIPPET_CHARS", int),
-        ("default_limit", "DSH_KB_DEFAULT_LIMIT", int),
-        ("mtime_tolerance", "DSH_KB_MTIME_TOLERANCE", float),
-        ("chunk_lines", "DSH_KB_CHUNK_LINES", int),
-        ("chunk_max_chars", "DSH_KB_CHUNK_MAX_CHARS", int),
+        ("stale_minutes", "STALE_MINUTES", int),
+        ("snippet_chars", "SNIPPET_CHARS", int),
+        ("default_limit", "DEFAULT_LIMIT", int),
+        ("mtime_tolerance", "MTIME_TOLERANCE", float),
+        ("chunk_lines", "CHUNK_LINES", int),
+        ("chunk_max_chars", "CHUNK_MAX_CHARS", int),
     ):
-        if os.environ.get(env):
+        if _env(env):
             try:
-                data[key] = cast(os.environ[env])
+                data[key] = cast(_env(env) or "")
             except ValueError:
                 pass
 
@@ -470,7 +502,7 @@ def load_config(**overrides) -> Config:
             except (TypeError, ValueError):
                 data.pop(key)
     # 策略名写错不静默：退回 lines（安全方向），同时记进 unknown_keys，
-    # 让 ``dsh-kb doctor`` 报出来——否则「以为是 structural、其实还在 lines」
+    # 让 ``scheda doctor`` 报出来——否则「以为是 structural、其实还在 lines」
     # 只能靠 diff 索引才看得出来。
     strategy_raw = data.get("chunk_strategy")
     strategy_bad = (
@@ -478,22 +510,22 @@ def load_config(**overrides) -> Config:
         and str(strategy_raw).strip().lower() not in CHUNK_STRATEGIES
     )
 
-    # rag 配置：config.json（嵌套或扁平）在前，DSH_KB_RAG_* 环境变量覆盖在后，
+    # rag 配置：config.json（嵌套或扁平）在前，SCHEDA_RAG_* 环境变量覆盖在后，
     # 与上面「env 覆盖文件」的优先级保持一致。
     rag_values, rag_unknown = _coerce_rag(data)
-    for key, env in (("vectors_db", "DSH_KB_RAG_VECTORS_DB"), ("model", "DSH_KB_RAG_MODEL")):
-        if os.environ.get(env):
-            rag_values[key] = os.environ[env]
-    for key, env, cast in (("dim", "DSH_KB_RAG_DIM", int), ("enabled", "DSH_KB_RAG_ENABLED", _env_flag),
+    for key, env in (("vectors_db", "RAG_VECTORS_DB"), ("model", "RAG_MODEL")):
+        if _env(env):
+            rag_values[key] = _env(env) or ""
+    for key, env, cast in (("dim", "RAG_DIM", int), ("enabled", "RAG_ENABLED", _env_flag),
                            ("allow_external_vectors_db",
-                            "DSH_KB_RAG_ALLOW_EXTERNAL_VECTORS_DB", _env_flag),
-                           ("vector_enabled", "DSH_KB_RAG_VECTOR", _env_flag)):
-        if os.environ.get(env):
+                            "RAG_ALLOW_EXTERNAL_VECTORS_DB", _env_flag),
+                           ("vector_enabled", "RAG_VECTOR", _env_flag)):
+        if _env(env):
             try:
-                rag_values[key] = cast(os.environ[env])
+                rag_values[key] = cast(_env(env) or "")
             except ValueError:
                 pass
-    # 其余 rag 子键统一走 ``DSH_KB_RAG_<FIELD>``（与扁平写法同名，便于照抄）。
+    # 其余 rag 子键统一走 ``SCHEDA_RAG_<FIELD>``（与扁平写法同名，便于照抄）。
     # 早期只映射了上面几个；`rerank_*` / `deep_*` 只能写 config.json 是个陷阱 ——
     # 一台机器用环境变量开功能、另一台用文件，排查起来会以为是两套行为。
     _already = {"vectors_db", "model", "dim", "enabled", "allow_external_vectors_db"}
@@ -510,7 +542,7 @@ def load_config(**overrides) -> Config:
     for name in _RAG_FIELDS:
         if name in _already:
             continue
-        raw = os.environ.get("DSH_KB_RAG_" + name.upper())
+        raw = _env("RAG_" + name.upper())
         if raw is None:
             continue
         try:

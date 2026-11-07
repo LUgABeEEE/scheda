@@ -1,12 +1,16 @@
-# dsh-kb
+# scheda
+
+> Renamed from **dsh-kb** in 0.9.0. The `dsh-kb` distribution is now the
+> DSH-specific adapter; the core lives here. The command `dsh-kb` still works
+> from this package, and `DSH_KB_*` environment variables are still read.
 
 **A personal knowledge base for AI agents: the source of truth lives on shared
 storage, each machine keeps a mirror and an index, retrieval is fast and works
 offline.**
 
-[![CI](https://github.com/LUgABeEEE/dsh-kb/actions/workflows/ci.yml/badge.svg)](https://github.com/LUgABeEEE/dsh-kb/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/dsh-kb.svg)](https://pypi.org/project/dsh-kb/)
-[![Python](https://img.shields.io/pypi/pyversions/dsh-kb.svg)](https://pypi.org/project/dsh-kb/)
+[![CI](https://github.com/LUgABeEEE/scheda/actions/workflows/ci.yml/badge.svg)](https://github.com/LUgABeEEE/scheda/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/scheda.svg)](https://pypi.org/project/scheda/)
+[![Python](https://img.shields.io/pypi/pyversions/scheda.svg)](https://pypi.org/project/scheda/)
 
 English | [中文](README.zh.md)
 
@@ -22,13 +26,13 @@ note-taking UI: one machine, one bundle, one owner.
 **What it costs**: Python ≥ 3.10 and **one dependency** ([`handrolled`](https://github.com/LUgABeEEE/handrolled),
 itself standard-library only, no compiled extensions) — no daemon, no server,
 no database service, no root. One process per command. State (mirror + index)
-lives under `~/.dsh-kb` and runs about 1.9× the size of the bundle; the index is
+lives under `~/.scheda` and runs about 1.9× the size of the bundle; the index is
 local, so a share that is offline or slow costs you freshness, not availability.
 
 **Try it in two minutes** — no share and no config file needed:
 
 ```bash
-git clone https://github.com/LUgABeEEE/dsh-kb && cd dsh-kb
+git clone https://github.com/LUgABeEEE/scheda && cd scheda
 bash examples/demo.sh          # builds a throwaway bundle, indexes it, searches it
 ```
 
@@ -43,7 +47,7 @@ thing: it **re-reads several sources**, **stuffs raw text into the context
 window** (one measured deployment re-sent ~230 000 tokens of context per
 request), and when it still cannot find the answer it says so.
 
-dsh-kb collapses that into one path:
+scheda collapses that into one path:
 
 ```
 one Markdown directory on shared storage     ← single source of truth
@@ -83,8 +87,16 @@ Pure Python, no compiled extensions, one dependency that has none of its own
 this project's text/WebDAV/mount/import layers were extracted into):
 
 ```bash
-pip install -e .          # or simply PYTHONPATH=src python3 -m dsh_kb
-dsh-kb --version
+pip install scheda        # from PyPI — the shortest path
+pip install -e .          # or from a checkout; or PYTHONPATH=src python3 -m scheda
+scheda --version
+```
+
+Running the suite from a source checkout needs the same single dependency first
+(`pip install handrolled`, already pulled in by `pip install -e .`):
+
+```bash
+python3 -m unittest discover -s tests -t .     # 546 tests, ~15 s, fully offline
 ```
 
 ---
@@ -106,7 +118,7 @@ dsh-kb --version
 
 ### 2. Configure
 
-Configuration lives in `~/.dsh-kb/config.json` — deliberately **outside any
+Configuration lives in `~/.scheda/config.json` — deliberately **outside any
 checkout**, so a public clone never carries your paths or private data:
 
 ```json
@@ -135,12 +147,12 @@ all are normalised.
 ### 3. Pull, index, search
 
 ```bash
-dsh-kb doctor                       # check source reachability and mirror hygiene
-dsh-kb refresh                      # sync + index — what a scheduler should call
-dsh-kb search "mount stale" -n 5
-dsh-kb search "UNIQ-000123" --json  # machine-readable
-dsh-kb read z0-public/mount.md --start 1 --lines 40
-dsh-kb push                         # upload local _incoming/ proposals
+scheda doctor                       # check source reachability and mirror hygiene
+scheda refresh                      # sync + index — what a scheduler should call
+scheda search "mount stale" -n 5
+scheda search "UNIQ-000123" --json  # machine-readable
+scheda read z0-public/mount.md --start 1 --lines 40
+scheda push                         # upload local _incoming/ proposals
 ```
 
 **Only `sync`, `push` and `doctor` write to the share** (and `doctor` writes just
@@ -159,7 +171,7 @@ hard requirement: otherwise "offline capable" is a lie.
 | `z0-public` | ✅ | ✅ | ✅ |
 | `z1-restricted` | ✅ | ✅ | ✅ (`inject: false`, for injectors to respect) |
 | `z2-sensitive` | ❌ **never copied** | ❌ | ❌ (requires explicit `--zone z2`) |
-| `z3-skills` | ✅ | ❌ **never indexed** (once registered) | ❌ (own entry point: `dsh-kb skills`; 2.3k `SKILL.md` would drown retrieval) |
+| `z3-skills` | ✅ | ❌ **never indexed** (once registered) | ❌ (own entry point: `scheda skills`; 2.3k `SKILL.md` would drown retrieval) |
 | `_meta/`, `_incoming/` | ✅ | ✅ | ✅ (layout, not private content) |
 | paths matching `never` | ❌ | ❌ | ❌ |
 
@@ -178,6 +190,7 @@ by tests.
 
 | Command | Writes? | Purpose |
 |---|---|---|
+| `init [--force]` | ✔ creates home + config | first run: state directories, a config skeleton, and the four commands that follow (refuses to overwrite an existing config without `--force`) |
 | `status` | — | configuration, source, mirror and index state, freshness |
 | `doctor` | ✔ probes | per-check diagnostics, including "does the mirror contain anything it should not" (writes two probe files, see below) |
 | `diff [--incoming-days DAYS] [--json]` | — (reads the source) | read-only health report: remote changes, local mirror gaps, index drift, backlog, conflicts, escapes |
@@ -192,6 +205,7 @@ by tests.
 | `import --from PATH [--format NAME] --prefix P [--zone Z] [--write]` | only with `--write` | turn another tool's export into pages — [docs/import.md](docs/import.md) |
 | `push [files…] [--force] [--expect SHA256] [--log [N]] [--allow-undeclared] [--json]` | ✔ | upload proposals (the supersession gate can refuse the batch) |
 | `mcp` | — | run the MCP server on stdio (for agent hosts) |
+| `web [--bind HOST] [--port PORT]` | — | read-only UI: status, search, page read, `/healthz` (localhost by default; there is no authentication) |
 
 Shared flags are accepted before or after the subcommand.
 
@@ -202,7 +216,7 @@ answer "can `push` work at all?". The probes are removed again; nothing else is
 written. Don't wire `doctor` into anything that must be strictly read-only.
 
 **Supersession is a first-class relation.** A page may carry `supersedes: [...]` or
-`superseded_by: <path>` in its front matter, and `dsh-kb supersede-check` reports the
+`superseded_by: <path>` in its front matter, and `scheda supersede-check` reports the
 four ways that relation goes wrong: a link nobody answers (not reciprocal), a cycle, a
 dangling target, and a page claimed by two successors. The same relation is a **gate on
 writes**: `push` refuses a whole batch when a proposal's title collides with a live page
@@ -218,7 +232,7 @@ something.
 
 ### What the two reports actually compare
 
-`dsh-kb diff` compares **two pairs, in two directions**, and splits both by file
+`scheda diff` compares **two pairs, in two directions**, and splits both by file
 kind (`markdown` / `other`) so image or JSON churn can't drown the `.md` diff:
 
 * *remote listing vs manifest* → `content`: what changed on the share. **Report
@@ -230,7 +244,7 @@ kind (`markdown` / `other`) so image or JSON churn can't drown the `.md` diff:
   re-fetch it. Extra local files are counted but not alarmed: `sync --prune`
   cannot delete them, so a human has to decide.
 
-`dsh-kb rag-check` compares the vector store against the index at **page**
+`scheda rag-check` compares the vector store against the index at **page**
 (`path`) and **chunk** (`path` + `startline`) granularity. The chunk view is
 what catches "one page, five chunks, only two embedded" — page-level counters
 stay at 0 for that shape. On an older store whose tables have no `startline`
@@ -242,26 +256,26 @@ column the comparison degrades to page-level and says so in `note`.
 
 | Key | Env | Default | Meaning |
 |---|---|---|---|
-| `source` | `DSH_KB_SOURCE` | `auto` | `auto` / `local` / `mount` / `smb` / `webdav` |
-| `mount` | `DSH_KB_MOUNT` | — | mount point (Samba/CIFS, NFS, or a plain directory) |
-| `local_root` | `DSH_KB_LOCAL_ROOT` | — | plain directory |
-| `smb_share` | `DSH_KB_SMB_SHARE` | — | unmounted Samba share, e.g. `//host/share` (needs `smbclient`) |
-| `webdav_root` | `DSH_KB_WEBDAV_ROOT` | — | WebDAV collection URL |
-| `stale_minutes` | `DSH_KB_STALE_MINUTES` | `15` | auto-refresh threshold |
-| `mtime_tolerance` | `DSH_KB_MTIME_TOLERANCE` | `1.0` | mtime delta still counted as "unchanged" |
-| `snippet_chars` | `DSH_KB_SNIPPET_CHARS` | `240` | snippet width |
-| `default_limit` | `DSH_KB_DEFAULT_LIMIT` | `8` | hits per query |
+| `source` | `SCHEDA_SOURCE` | `auto` | `auto` / `local` / `mount` / `smb` / `webdav` |
+| `mount` | `SCHEDA_MOUNT` | — | mount point (Samba/CIFS, NFS, or a plain directory) |
+| `local_root` | `SCHEDA_LOCAL_ROOT` | — | plain directory |
+| `smb_share` | `SCHEDA_SMB_SHARE` | — | unmounted Samba share, e.g. `//host/share` (needs `smbclient`) |
+| `webdav_root` | `SCHEDA_WEBDAV_ROOT` | — | WebDAV collection URL |
+| `stale_minutes` | `SCHEDA_STALE_MINUTES` | `15` | auto-refresh threshold |
+| `mtime_tolerance` | `SCHEDA_MTIME_TOLERANCE` | `1.0` | mtime delta still counted as "unchanged" |
+| `snippet_chars` | `SCHEDA_SNIPPET_CHARS` | `240` | snippet width |
+| `default_limit` | `SCHEDA_DEFAULT_LIMIT` | `8` | hits per query |
 | `zones` / `never` | — | see above | policy |
-| `rag.*` | `DSH_KB_RAG_*` | all off | optional semantic arm — see [docs/semantic-arm.md](docs/semantic-arm.md) |
+| `rag.*` | `SCHEDA_RAG_*` | all off | optional semantic arm — see [docs/semantic-arm.md](docs/semantic-arm.md) |
 
 WebDAV secrets are read **only** from the environment or a credentials file,
 never from `config.json`:
 
 ```bash
-export DSH_KB_WEBDAV_USER=me
-export DSH_KB_WEBDAV_PASSWORD=...            # or DSH_KB_WEBDAV_CREDENTIALS=<key=value file>
-export DSH_KB_WEBDAV_CERT=... DSH_KB_WEBDAV_KEY=... DSH_KB_WEBDAV_CA=...   # mutual TLS
-export DSH_KB_WEBDAV_CONNECT=192.0.2.10      # connect to an IP, verify TLS against the CN
+export SCHEDA_WEBDAV_USER=me
+export SCHEDA_WEBDAV_PASSWORD=...            # or SCHEDA_WEBDAV_CREDENTIALS=<key=value file>
+export SCHEDA_WEBDAV_CERT=... SCHEDA_WEBDAV_KEY=... SCHEDA_WEBDAV_CA=...   # mutual TLS
+export SCHEDA_WEBDAV_CONNECT=192.0.2.10      # connect to an IP, verify TLS against the CN
 ```
 
 ---
@@ -293,10 +307,10 @@ If the band is low or nothing matched, two optional stages run in order:
 
 | Stage | Cost | What it does |
 |---|---|---|
-| synonym expansion (`DSH_KB_DICT=1` + a table) | milliseconds, no model | substitute the word the user typed for the word the corpus uses |
+| synonym expansion (`SCHEDA_DICT=1` + a table) | milliseconds, no model | substitute the word the user typed for the word the corpus uses |
 | query rewriting | one local model call, cached per query | ask a model for other phrasings, then merge |
 
-Both **fill empty slots only** (`DSH_KB_MERGE=fill`, the default) — a variant can
+Both **fill empty slots only** (`SCHEDA_MERGE=fill`, the default) — a variant can
 never push out a hit the original query found. Pure reciprocal-rank fusion was
 measured too: on a 50-question gold set it dropped page@5 from 0.580 to 0.440,
 which is why `fill` is the default and `top2` is opt-in.
@@ -335,7 +349,7 @@ by rowid. Inlining the text into FTS5 measured **8.1×**.
 
 **Positioning: a supplement, not standing context.** Nothing is auto-injected and nothing is searched per turn — it is consulted once, when past decisions, environment facts or history are actually needed.
 
-Two shapes, one implementation (`dsh_kb.service`), so their output cannot drift:
+Two shapes, one implementation (`scheda.service`), so their output cannot drift:
 
 | Shape | When | Cost |
 |---|---|---|
@@ -343,7 +357,7 @@ Two shapes, one implementation (`dsh_kb.service`), so their output cannot drift:
 | **MCP server (stdio)** | the host speaks MCP (recommended) | **~556 tokens** standing (2099-char `tools/list` incl. annotations + 125-char instructions, measured), one less layer per call |
 
 ```bash
-dsh-kb mcp            # JSON-RPC on stdin/stdout, exposing search / read / status / skills
+scheda mcp            # JSON-RPC on stdin/stdout, exposing search / read / status / skills
 ```
 
 Wiring it into DSH is one `insert` (other hosts:
@@ -356,14 +370,14 @@ Wiring it into DSH is one `insert` (other hosts:
     serverName: kb
     transport: stdio
     command: python3
-    args: [-m, dsh_kb, mcp, --home, /srv/dsh-kb, --source, auto, --mount, /mnt/nas/kb]
-    env: { PYTHONPATH: /opt/dsh-kb/src }
+    args: [-m, scheda, mcp, --home, /srv/scheda, --source, auto, --mount, /mnt/nas/kb]
+    env: { PYTHONPATH: /opt/scheda/src }
 ```
 
 > **Why the configuration goes in `args`, not `env`**: some hosts scrub the
 > environment of the MCP child process (credential-shaped names, stale
 > prefixes). Command-line arguments are never scrubbed. Measured: with every
-> `DSH_KB_*` variable removed and only `args` set, it still works against a real
+> `SCHEDA_*` variable removed and only `args` set, it still works against a real
 > share.
 
 Design choices — one optional `deep` flag, no `mode` knobs, no write tools, failures
@@ -384,7 +398,7 @@ outside the zero-dependency promise:
 | ONNX embedding backend | ~610 MB model (A/B experiment) | off |
 | Deep rerank (`deep=true`) | an OpenAI-compatible endpoint + key | off |
 
-With the defaults, `import dsh_kb` never touches third-party code and a search
+With the defaults, `import scheda` never touches third-party code and a search
 is byte-identical to 0.1.0. Read
 [docs/semantic-arm.md](docs/semantic-arm.md) before enabling anything: it lists
 what each layer needs, where the models come from, and **which of them send page
@@ -397,19 +411,20 @@ If the knowledge already exists somewhere else, `import` turns that export into
 pages instead of asking you to copy files by hand:
 
 ```bash
-dsh-kb import --from ~/notes/obsidian --format obsidian --prefix notes        # dry run
-dsh-kb import --from ~/notes/obsidian --format obsidian --prefix notes --write
-dsh-kb refresh
+scheda import --from ~/notes/obsidian --format obsidian --prefix notes        # dry run
+scheda import --from ~/notes/obsidian --format obsidian --prefix notes --write
+scheda refresh
 ```
 
 Adapters for `mem0`, Obsidian, Notion's Markdown export, basic-memory, plain
-JSON/JSONL and dsh-kb's own `records/v1`. It is additive (never deletes),
+JSON/JSONL and scheda's own `records/v1`. It is additive (never deletes),
 deterministic (a second run is a no-op), and refuses to write into `z0-public`
 without `--allow-public`. See [docs/import.md](docs/import.md).
 
 ## Status
 
-Alpha (0.6.0) with 435 tests (unit, end-to-end, transport, CLI smoke and MCP — all offline):
+Alpha (0.9.0) with 546 tests (unit, end-to-end, transport, CLI smoke, MCP and the
+packaging contract — all offline):
 
 ```bash
 python3 -m unittest discover -s tests -t . -v
@@ -426,10 +441,17 @@ client against this hand-rolled server); otherwise it skips.
       (`chunk_strategy = "structural"`; `lines` stays the byte-identical default)
 - [x] Optional image arm — pictures participate in the same ranking, in their own
       sidecar database, off by default
-- [ ] Scheduled refresh (systemd timer / cron examples)
+- [x] Scheduled refresh (systemd unit + timer, cron, Windows scheduled task) — `deploy/`
 - [ ] Chinese embedding evaluation to pick a default model
-- [ ] Optional read-only HTTP viewer
+- [x] Optional read-only HTTP viewer — `scheda web` (standard library, no write endpoint)
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+**AGPL-3.0-or-later** — see [LICENSE](LICENSE) — or a **commercial license**
+([COMMERCIAL.md](COMMERCIAL.md)) for closed-source embedding, OEM/white-label and
+hosted services. Use inside one organization does not trigger any AGPL
+obligation, so personal and in-house deployments are unchanged.
+
+Every release up to and including **0.6.0** stays MIT; that grant cannot be
+withdrawn. From **0.8.0** the project is dual-licensed. Boundary and reasoning:
+[docs/licensing.md](docs/licensing.md).

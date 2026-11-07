@@ -1,23 +1,23 @@
 # Importing from another tool
 
-`dsh-kb import` turns somebody else's export into pages inside the bundle. It is
+`scheda import` turns somebody else's export into pages inside the bundle. It is
 the inverse of `search`: one command, one input file or directory, deterministic
 output, and **dry-run by default**.
 
 ```bash
 # what would change? (the default — nothing is written)
-dsh-kb import --from ~/notes/obsidian --format obsidian --prefix notes
+scheda import --from ~/notes/obsidian --format obsidian --prefix notes
 
 # write it, then pick the new pages up
-dsh-kb import --from ~/notes/obsidian --format obsidian --prefix notes --write
-dsh-kb refresh
+scheda import --from ~/notes/obsidian --format obsidian --prefix notes --write
+scheda refresh
 ```
 
 ## Formats
 
 | `--format` | Reads | Typical source |
 |---|---|---|
-| `records` | dsh-kb's own `records/v1` JSON (below) | your own exporter |
+| `records` | scheda's own `records/v1` JSON (below) | your own exporter |
 | `jsonl` | one JSON object per line (`content`/`text`/`memory`/`body`) | any log-shaped export |
 | `mem0` | a mem0 export: JSON array or `{"results": [...]}` | `mem0.get_all()` |
 | `obsidian` | a vault: Markdown + YAML front matter | an Obsidian folder |
@@ -25,7 +25,7 @@ dsh-kb refresh
 | `basic-memory` | notes whose body is `- [category] observation` bullets | basic-memory |
 
 The list is meant to grow; each adapter is one module under
-`src/dsh_kb/importers/` plus one entry in its `ADAPTERS` table. If a format
+`src/scheda/importers/` plus one entry in its `ADAPTERS` table. If a format
 cannot be read with the standard library and a documented shape, it does not
 belong here — that is the same rule as the rest of the project.
 
@@ -46,7 +46,7 @@ The neutral format everything else converts into. It is deliberately boring:
     {
       "id": "677e04c9",
       "content": "the text, in Markdown",
-      "tags": ["dsh-kb", "git"],
+      "tags": ["scheda", "git"],
       "type": "fact",
       "updated_at": "2026-10-28T23:35:00+08:00",
       "origin": "auto"
@@ -89,7 +89,7 @@ only differences are written. The command reports `new / changed / same / failed
   instead of skipping a few files quietly.
 - **No deletion.** `import` only writes. Removing pages stays with
   `sync --prune`, where a human is in the loop.
-- **No redaction.** Filtering belongs to the exporter: dsh-kb does not pretend to
+- **No redaction.** Filtering belongs to the exporter: scheda does not pretend to
   know what is private. It does promise not to amplify — no writing outside the
   prefix, no following symlinks.
 - **Page size cap** (`--max-page-bytes`, default 2 MB): an oversized page is an
@@ -107,7 +107,7 @@ only differences are written. The command reports `new / changed / same / failed
 ## Writing your own adapter
 
 ```python
-# src/dsh_kb/importers/mytool.py
+# src/scheda/importers/mytool.py
 from pathlib import Path
 from . import Record
 from .records import coerce

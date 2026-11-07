@@ -74,7 +74,7 @@
 
 | 差异 | 症状 | 处理 |
 |---|---|---|
-| **会话掉线** | 几乎所有系统调用返回 `ESTALE`，`rglob` 直接抛异常 | 捕获并给出可执行句子（"重新挂载，或用 `DSH_KB_SOURCE=webdav` 兜底"）；单文件读失败不中断整次遍历 |
+| **会话掉线** | 几乎所有系统调用返回 `ESTALE`，`rglob` 直接抛异常 | 捕获并给出可执行句子（"重新挂载，或用 `SCHEDA_SOURCE=webdav` 兜底"）；单文件读失败不中断整次遍历 |
 | **只读视图** | 挂载选项写 `rw`，但服务端账号只读；或运营者刻意挂成只读 | 先读 `/proc/mounts` 判断，**写之前**就失败；`doctor` 用真实写探针验证，并把它定为 `warn` 而非 `fail`（读是主业） |
 | **时间戳粒度** | 消费级 NAS 实测 `Last-Modified` 只有 **1 秒**精度 | 容差可配（默认 1.0 秒）；并承认极限——**同一秒内、字节数不变**的修改看不见，提供 `sync --full` |
 
@@ -183,7 +183,7 @@ p90 2 117，最大 22 562；28% 的块超过 1 000 字符**。块过长时 embed
 **为什么默认必须是 `lines`**：`chunk_id = sha256(path + 0x1f + text)[:16]` 是内容寻址的。
 切法一变，全库每个块的名字都变 ⇒ `vectors.sqlite` 里每一行都对不上，等于要求全量
 重嵌。升级不该静默触发这种量级的工作，所以换策略必须是显式动作
-（`"chunk_strategy": "structural"` 或 `DSH_KB_CHUNK_STRATEGY=structural`），
+（`"chunk_strategy": "structural"` 或 `SCHEDA_CHUNK_STRATEGY=structural`），
 **回退就是把它删掉**。写错值（拼错、这个版本没见过的取值）退回 `lines`，并出现在
 `doctor` 的 `unknown keys` 里——退回是安全方向，但不会静默；大小写无所谓
 （`Structural` 也认）。
@@ -237,7 +237,7 @@ p90 2 117，最大 22 562；28% 的块超过 1 000 字符**。块过长时 embed
 
 一个必须提前说清楚的副作用：换策略后旧块全部成为**换代残留**（同一页的新块各自
 嵌入、旧块的 chunk_id 还在向量库里）。正确顺序是：改配置 → 重建索引 → 重嵌向量 →
-`dsh-kb rag-check --prune-chunks` 清残留。`--prune`（页级）管不到这种残留，
+`scheda rag-check --prune-chunks` 清残留。`--prune`（页级）管不到这种残留，
 它在 CLI 里是单独一段输出，原因就写在这里。
 
 ---
@@ -294,7 +294,7 @@ agent **只写 `_incoming/`**；转正由人或定时任务做。
 
 <a id="agent-integration"></a><a id="与-agent-集成"></a>
 
-两种形态，**共用同一份用例层**（`dsh_kb.service`）：CLI + `--json`，以及
+两种形态，**共用同一份用例层**（`scheda.service`）：CLI + `--json`，以及
 **MCP 服务器（stdio）**，暴露三个工具：
 
 | 工具 | 参数 | 返回 |
@@ -308,7 +308,7 @@ agent **只写 `_incoming/`**；转正由人或定时任务做。
 
 ### 9.1 MCP 服务器为什么手写而不用 SDK
 
-dsh-kb 宣称**零运行时依赖**，而 agent 真正需要的协议面只有三个方法
+scheda 宣称**零运行时依赖**，而 agent 真正需要的协议面只有三个方法
 （`initialize` / `tools/list` / `tools/call`）加换行分隔的 JSON-RPC 2.0。
 引入 SDK 会把它的发布节奏变成用户的升级负担。
 
@@ -327,7 +327,7 @@ dsh-kb 宣称**零运行时依赖**，而 agent 真正需要的协议面只有�
 有些宿主在拉起 MCP 子进程时会**清洗环境变量**（凭据形状的名字、过期的前缀）。
 参数不会被清洗，所以 `--home/--source/--mount/...` 全都做成了命令行开关。
 
-实测：把 `DSH_KB_*` 全部清空、只留 `args`，对真实共享盘照常工作。
+实测：把 `SCHEDA_*` 全部清空、只留 `args`，对真实共享盘照常工作。
 （宿主若把显式 `env` 与清洗后的父环境合并，两种方式都行；但 argv 是更稳的那条。）
 
 ### 9.3 其它设计要点
@@ -363,11 +363,11 @@ dsh-kb 宣称**零运行时依赖**，而 agent 真正需要的协议面只有�
 python3 scripts/gen_corpus.py /tmp/kb/mirror 10000
 
 # 建索引并计时
-DSH_KB_HOME=/tmp/kb DSH_KB_SOURCE=local DSH_KB_LOCAL_ROOT=/tmp/kb/mirror \
-  time python3 -m dsh_kb index --quiet
+SCHEDA_HOME=/tmp/kb SCHEDA_SOURCE=local SCHEDA_LOCAL_ROOT=/tmp/kb/mirror \
+  time python3 -m scheda index --quiet
 
 # 端到端检索
-DSH_KB_HOME=/tmp/kb python3 -m dsh_kb search "配置" -n 8 --no-auto-refresh --quiet
+SCHEDA_HOME=/tmp/kb python3 -m scheda search "配置" -n 8 --no-auto-refresh --quiet
 ```
 
 `scripts/gen_corpus.py` 随仓库提供；测量脚本见 `scripts/bench.py`。

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Vector store <-> index consistency: report drift, prune orphan vectors.
 
 Why this module exists
@@ -112,7 +113,7 @@ def enabled(cfg: Config) -> bool:
 
     The default policy is "the file decides": a machine that never built vectors
     is *absent*, not broken.  An explicit ``rag.enabled`` (config file or
-    ``DSH_KB_RAG_ENABLED``) overrides the probe, so an operator can silence a
+    ``SCHEDA_RAG_ENABLED``) overrides the probe, so an operator can silence a
     doctor line on purpose.
     """
     flag = cfg.rag.enabled
@@ -184,7 +185,7 @@ def check(cfg: Config) -> dict:
     index_db = cfg.index_db
     if not index_db.is_file():
         problems.append(f"index {index_db} is missing")
-        fixes.append("run `dsh-kb index`")
+        fixes.append("run `scheda index`")
     else:
         try:
             with closing(_open_ro(index_db)) as con:
@@ -194,7 +195,7 @@ def check(cfg: Config) -> dict:
                 meta_labels = _chunk_labels(con, "meta")
         except sqlite3.Error as exc:
             problems.append(f"index {index_db} is unusable ({exc})")
-            fixes.append("run `dsh-kb index` to rebuild it")
+            fixes.append("run `scheda index` to rebuild it")
 
     vec_paths: set | None = None
     vec_chunks: set | None = None
@@ -203,7 +204,7 @@ def check(cfg: Config) -> dict:
     vdb = vectors_db(cfg)
     if not vdb.is_file():
         problems.append(f"vector store {vdb} is missing")
-        fixes.append("point DSH_KB_RAG_VECTORS_DB at the real file, or build the vectors")
+        fixes.append("point SCHEDA_RAG_VECTORS_DB at the real file, or build the vectors")
     else:
         try:
             with closing(_open_ro(vdb)) as con:
@@ -274,7 +275,7 @@ def check(cfg: Config) -> dict:
             if out["chunks_missing"]:
                 problems.append(f"{out['chunks_missing']} chunk(s) have no vectors "
                                 f"(page-level missing: {out['missing']})")
-                fixes.append("re-embed the missing chunks (`dsh-kb index` then re-embed "
+                fixes.append("re-embed the missing chunks (`scheda index` then re-embed "
                              "the pages that lost chunks)")
             if out["chunks_orphan"]:
                 problems.append(f"{out['chunks_orphan']} vector chunk(s) are no longer "
@@ -419,7 +420,7 @@ def prune(cfg: Config, *, dry_run: bool = True, force: bool = False) -> dict:
         return refuse(REFUSED_INDEX, (
             f"refusing to prune: index {cfg.index_db} is missing or unreadable — "
             f"with an unknown index side every vector row looks like an orphan; "
-            f"build the index first (`dsh-kb index`)"))
+            f"build the index first (`scheda index`)"))
 
     orphan_rows = sum(1 for _rid, path in rows if path not in meta_paths)
     orphan_paths = len({path for _rid, path in rows if path not in meta_paths})
@@ -435,7 +436,7 @@ def prune(cfg: Config, *, dry_run: bool = True, force: bool = False) -> dict:
             f"refusing to prune: vectors_db {vdb} is outside home {cfg.home} — "
             f"prune compares the vector store against *this* home's index, so a "
             f"store from another knowledge base looks entirely orphaned; point "
-            f"DSH_KB_RAG_VECTORS_DB at a store inside home, or set "
+            f"SCHEDA_RAG_VECTORS_DB at a store inside home, or set "
             f"rag.allow_external_vectors_db=true if the split is intentional "
             f"(an external store is still subject to the bulk-delete guard)"))
 
@@ -445,7 +446,7 @@ def prune(cfg: Config, *, dry_run: bool = True, force: bool = False) -> dict:
             return refuse(REFUSED_EMPTY_HOME, (
                 f"refusing to prune: index {cfg.index_db} has no pages while {vdb} "
                 f"has {total_rows} vector row(s) — an empty index side would delete "
-                f"all of them; build the index first (`dsh-kb index`), or pass "
+                f"all of them; build the index first (`scheda index`), or pass "
                 f"--force if this really is the same knowledge base"))
         out["bypassed"].append(REFUSED_EMPTY_HOME)
 
@@ -727,7 +728,7 @@ def _allow_external_vectors_db(cfg: Config) -> bool:
 
     1. ``cfg.rag.allow_external_vectors_db`` — honoured the moment ``config.py``
        grows the field (this repair must not touch that file);
-    2. ``DSH_KB_RAG_ALLOW_EXTERNAL_VECTORS_DB``;
+    2. ``SCHEDA_RAG_ALLOW_EXTERNAL_VECTORS_DB``;
     3. ``<home>/config.json``, nested (``rag.allow_external_vectors_db``) or flat
        (``rag_allow_external_vectors_db``) — the two spellings the rest of the
        rag config already accepts.
@@ -738,7 +739,7 @@ def _allow_external_vectors_db(cfg: Config) -> bool:
     flag = getattr(cfg.rag, "allow_external_vectors_db", None)
     if flag is not None:
         return _truthy(flag)
-    env = os.environ.get("DSH_KB_RAG_ALLOW_EXTERNAL_VECTORS_DB")
+    env = os.environ.get("SCHEDA_RAG_ALLOW_EXTERNAL_VECTORS_DB")
     if env is not None:
         return _truthy(env)
     return _truthy(_config_file_flag(cfg, "allow_external_vectors_db"))
@@ -842,7 +843,7 @@ def prune_chunks(cfg: Config, *, dry_run: bool = True, force: bool = False) -> d
         return refuse(REFUSED_INDEX, (
             f"refusing to prune chunks: index {cfg.index_db} is missing or unreadable — "
             f"with an unknown index side every vector row looks like an orphan; "
-            f"build the index first (`dsh-kb index`)"))
+            f"build the index first (`scheda index`)"))
 
     # ---- 身份门：两侧必须用同一个块身份，否则集合差全是噪音 ----
     if meta_chunks is None or vec_chunks is None or meta_identity != vec_identity:
@@ -877,7 +878,7 @@ def prune_chunks(cfg: Config, *, dry_run: bool = True, force: bool = False) -> d
             f"refusing to prune: vectors_db {vdb} is outside home {cfg.home} — "
             f"prune compares the vector store against *this* home's index, so a "
             f"store from another knowledge base looks entirely orphaned; point "
-            f"DSH_KB_RAG_VECTORS_DB at a store inside home, or set "
+            f"SCHEDA_RAG_VECTORS_DB at a store inside home, or set "
             f"rag.allow_external_vectors_db=true if the split is intentional"))
 
     # ---- 防线 2：空 home ----
@@ -886,7 +887,7 @@ def prune_chunks(cfg: Config, *, dry_run: bool = True, force: bool = False) -> d
             return refuse(REFUSED_EMPTY_HOME, (
                 f"refusing to prune: index {cfg.index_db} has no chunks while {vdb} "
                 f"has {total_rows} vector row(s) — an empty index side would delete "
-                f"all of them; build the index first (`dsh-kb index`), or pass "
+                f"all of them; build the index first (`scheda index`), or pass "
                 f"--force if this really is the same knowledge base"))
         out["bypassed"].append(REFUSED_EMPTY_HOME)
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """可选图片向量侧车：把镜像里的图片用火山方舟多模态模型向量化。
 
 为什么要单独一个库：文本向量（``vectors.sqlite``）是 bge-m3 产的，维度 1024；
@@ -10,19 +11,19 @@
    直接报 "does not support this api"。
 2. **一次请求只放一条输入**。``input`` 数组传多条时接口**不报错**，只返回第一条
    的向量 —— 静默错位，最难查。（``tests/test_image_arm.py`` 对此有断言。）
-3. **凭据键名由宿主指定**（``DSH_KB_IMAGE_KEY_NAME``，默认 ``IMAGE_EMBED_API_KEY``）。
+3. **凭据键名由宿主指定**（``SCHEDA_IMAGE_KEY_NAME``，默认 ``IMAGE_EMBED_API_KEY``）。
    同一个服务通常既有订阅键又有按量键，拿错那个不会报「键错了」，而是报模型不支持——
    所以这里只认一个名字，绝不「找不到就换一个」。密钥只读进内存，绝不落盘、
    不写日志、不进异常消息。
 
 默认关闭：``rag.image_arm_enabled``（或环境变量
-``DSH_KB_RAG_IMAGE_ARM_ENABLED``）为真之前，检索路径连这个模块都不会 import。
+``SCHEDA_RAG_IMAGE_ARM_ENABLED``）为真之前，检索路径连这个模块都不会 import。
 构建是显式的离线动作（``--build``），不是检索副作用。
 
 CLI::
 
-    python3 -m dsh_kb.image_embed --build [--home /srv/kb] [--limit 20]
-    python3 -m dsh_kb.image_embed --status
+    python3 -m scheda.image_embed --build [--home /srv/kb] [--limit 20]
+    python3 -m scheda.image_embed --status
 
 并发用 ``ThreadPoolExecutor``：一条一个 HTTP 请求，8 并发实测已经把 2048 维图片
 （约 68 tokens/张）打到每秒几十张，再高只是给对端加压力。
@@ -82,15 +83,15 @@ _CORPUS_INSTRUCTIONS = "Target_modality: text.\nInstruction:根据这段文字�
 _QUERY_INSTRUCTIONS = _CORPUS_INSTRUCTIONS + "\nQuery:"
 
 #: 凭据文件位置。**故意没有默认值** —— 「凭据放哪」是部署事实，不是库该猜的东西。
-#: 宿主用 ``DSH_KB_IMAGE_CREDENTIALS`` 指过来（或调用方显式传参）。
+#: 宿主用 ``SCHEDA_IMAGE_CREDENTIALS`` 指过来（或调用方显式传参）。
 DEFAULT_CREDENTIALS = ""
 
-#: 从凭据文件里读哪个键。默认中性名，宿主用 ``DSH_KB_IMAGE_KEY_NAME`` 改成自己
+#: 从凭据文件里读哪个键。默认中性名，宿主用 ``SCHEDA_IMAGE_KEY_NAME`` 改成自己
 #: 实际用的名字（例如某个多模态服务的 PAYG 键）—— 厂商叫什么不该写死在库里。
 #: 唯一的要求是**别混用同一个服务的订阅键**：那种键调 embedding 会因无权限而失败，
 #: 而失败信息看起来像模型不存在，比直接说「键不对」难查得多。
 DEFAULT_KEY_NAME = "IMAGE_EMBED_API_KEY"
-CREDENTIAL_REF = os.environ.get("DSH_KB_IMAGE_KEY_NAME") or DEFAULT_KEY_NAME
+CREDENTIAL_REF = os.environ.get("SCHEDA_IMAGE_KEY_NAME") or DEFAULT_KEY_NAME
 
 #: 失败重试：3 次，指数退避（0.5s / 1s）。
 RETRIES = 3
@@ -216,7 +217,7 @@ def credentials_path() -> Path | None:
     没有内置默认路径：库里写死一个部署路径，换个 home 就会读到别人的凭据，
     或者读到不存在的文件却报成「模型不可用」。
     """
-    raw = os.environ.get("DSH_KB_IMAGE_CREDENTIALS") or DEFAULT_CREDENTIALS
+    raw = os.environ.get("SCHEDA_IMAGE_CREDENTIALS") or DEFAULT_CREDENTIALS
     return Path(raw) if raw else None
 
 
@@ -260,7 +261,7 @@ def _read_refs(path: Path) -> dict:
 def api_key(*, required: bool = False) -> str | None:
     """从凭据库取 ``CREDENTIAL_REF`` 指定的那个键；读不到返回 None。
 
-    只认 ``CREDENTIAL_REF`` 指定的那一个键（宿主用 ``DSH_KB_IMAGE_KEY_NAME`` 命名）。
+    只认 ``CREDENTIAL_REF`` 指定的那一个键（宿主用 ``SCHEDA_IMAGE_KEY_NAME`` 命名）。
     **不**做任何「找不到就换一个」的猜测 —— 同一个服务常同时有订阅键和按量键，
     拿错那个不会报「键错了」，而是报模型不支持，静默换键只会把 401 变成更难查的 400。
 
@@ -271,7 +272,7 @@ def api_key(*, required: bool = False) -> str | None:
     if path is None:
         if required:
             raise ImageAuthError(
-                "未配置图片嵌入凭据路径：设 DSH_KB_IMAGE_CREDENTIALS 指向一个"
+                "未配置图片嵌入凭据路径：设 SCHEDA_IMAGE_CREDENTIALS 指向一个"
                 f"含 refs.{CREDENTIAL_REF} 的文件")
         return None
     try:
@@ -294,7 +295,7 @@ def api_key(*, required: bool = False) -> str | None:
     key = _KEY_CACHE.get(cache_key)
     if not key and required:
         raise ImageAuthError(
-            f"{path} 的 refs 里没有 {CREDENTIAL_REF}（可用 DSH_KB_IMAGE_KEY_NAME 改名；"
+            f"{path} 的 refs 里没有 {CREDENTIAL_REF}（可用 SCHEDA_IMAGE_KEY_NAME 改名；"
             f"注意别用订阅键，它调 embedding 会报模型不支持）"
         )
     return key
@@ -309,11 +310,11 @@ def _clear_key_cache() -> None:
 
 
 def _endpoint() -> str:
-    return os.environ.get("DSH_KB_IMAGE_ENDPOINT") or DEFAULT_ENDPOINT
+    return os.environ.get("SCHEDA_IMAGE_ENDPOINT") or DEFAULT_ENDPOINT
 
 
 def _model() -> str:
-    return os.environ.get("DSH_KB_IMAGE_MODEL") or DEFAULT_MODEL
+    return os.environ.get("SCHEDA_IMAGE_MODEL") or DEFAULT_MODEL
 
 
 def _redact(text: str, key: str | None) -> str:
@@ -445,7 +446,7 @@ def default_db(home: Path | str | None = None, vectors_db: Path | str | None = N
     """默认库位置：与文本向量库同目录的 ``vectors-image.sqlite``。"""
     if vectors_db:
         return Path(vectors_db).parent / "vectors-image.sqlite"
-    base = Path(home) if home else Path(os.environ.get("DSH_KB_HOME") or "~/.dsh-kb").expanduser()
+    base = Path(home) if home else Path(os.environ.get("SCHEDA_HOME") or "~/.scheda").expanduser()
     return base / "index" / "vectors-image.sqlite"
 
 
@@ -453,7 +454,7 @@ def _configured_db(home: Path | str | None = None, home_arg: str | None = None) 
     """--db 没给时的库路径：先问配置，再回落到默认位置。
 
     为什么必须问配置：``ragvec`` 检索时读的是 ``rag.image_arm_db`` /
-    ``DSH_KB_RAG_IMAGE_ARM_DB``。如果 build 只用 ``<home>/index`` 推导，用户一旦
+    ``SCHEDA_RAG_IMAGE_ARM_DB``。如果 build 只用 ``<home>/index`` 推导，用户一旦
     自定义了路径就会「embed 写 A、检索读 B」——两边都成功，只是互相看不见。
     """
     try:
@@ -698,7 +699,7 @@ def build(db: Path | str, mirror: Path | str, *, limit: int | None = None,
 def _default_mirror(explicit: str | None, home: str | None) -> Path:
     if explicit:
         return Path(explicit).expanduser()
-    env_mirror = os.environ.get("DSH_KB_MIRROR")
+    env_mirror = os.environ.get("SCHEDA_MIRROR")
     if env_mirror:
         return Path(env_mirror).expanduser()
     try:
@@ -709,12 +710,12 @@ def _default_mirror(explicit: str | None, home: str | None) -> Path:
         cfg = load_config(**({"home": Path(home).expanduser()} if home else {}))
         return cfg.mirror_dir
     except Exception:
-        base = Path(home or os.environ.get("DSH_KB_HOME") or "~/.dsh-kb").expanduser()
+        base = Path(home or os.environ.get("SCHEDA_HOME") or "~/.scheda").expanduser()
         return base / "mirror"
 
 
 def _default_home(home: str | None) -> Path:
-    return Path(home or os.environ.get("DSH_KB_HOME") or "~/.dsh-kb").expanduser()
+    return Path(home or os.environ.get("SCHEDA_HOME") or "~/.scheda").expanduser()
 
 
 def _config_zone_prefixes(home: Path) -> tuple[str, ...] | None:
@@ -737,7 +738,7 @@ def _parse_prefixes(raw: str | None) -> tuple[str, ...] | None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python3 -m dsh_kb.image_embed",
+        prog="python3 -m scheda.image_embed",
         description="图片多模态侧车：向量化 / 查看状态（默认不参与检索）",
     )
     action = parser.add_mutually_exclusive_group(required=True)
@@ -745,7 +746,7 @@ def main(argv: list[str] | None = None) -> int:
     action.add_argument("--status", action="store_true", help="只读查看库状态")
     action.add_argument("--readiness", action="store_true",
                         help="评估图片路是否真的可能被用到（库内数据 + 上游门控）")
-    parser.add_argument("--home", help="dsh-kb home（含 mirror/ 与 index/）")
+    parser.add_argument("--home", help="scheda home（含 mirror/ 与 index/）")
     parser.add_argument("--mirror", help="镜像目录（默认 <home>/mirror）")
     parser.add_argument("--db", help="图片库路径（默认 <home>/index/vectors-image.sqlite）")
     parser.add_argument("--limit", type=int, default=None, help="只嵌前 N 张（验证用）")

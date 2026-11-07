@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """可选向量臂：把 bge-m3 嵌入 + ``vectors.sqlite`` 余弦接进生产检索。
 
 设计取舍（2026-10-23，来自度量台的实证）：
@@ -14,7 +15,7 @@
 余弦 0–1），直接相加没有意义。融合后的 score 是 RRF 值，不是 BM25 —— 这点写进 note。
 
 图片第三路（P2 侧车，2026-11-06）沿同一口径接在最后：``vectors-image.sqlite``
-里的图片向量由 :mod:`dsh_kb.image_embed` 离线构建，检索时用文本查询向量去比，
+里的图片向量由 :mod:`scheda.image_embed` 离线构建，检索时用文本查询向量去比，
 权重独立（``rag.image_arm_weight``，默认 0.6）。它默认关闭，关闭时连
 ``image_embed`` 都不 import；开启后任何失败（无 numpy / 库不存在 / 无 key /
 HTTP 失败 / schema 不符）都只是 note 里的一句「图片路跳过」，文本结果照常返回。
@@ -81,7 +82,7 @@ def _load_d2q(db: Path):
 
 
 def _endpoint() -> str:
-    return os.environ.get("DSH_KB_EMBED_ENDPOINT", DEFAULT_ENDPOINT)
+    return os.environ.get("SCHEDA_EMBED_ENDPOINT", DEFAULT_ENDPOINT)
 
 
 def _embed_provider() -> str:
@@ -90,11 +91,11 @@ def _embed_provider() -> str:
     只给换模型 A/B 用：向量库必须与模型同源，切后端时也要切 rag.vectors_db。
     默认永远是 ollama —— 换模型是个未决实验，不该因为环境残留而悄悄生效。
     """
-    return (os.environ.get("DSH_KB_EMBED_PROVIDER") or "ollama").strip().lower()
+    return (os.environ.get("SCHEDA_EMBED_PROVIDER") or "ollama").strip().lower()
 
 
 def _numpy():
-    """延迟导入 numpy；可选地从 ``DSH_KB_NUMPY_PATH`` 借一份。
+    """延迟导入 numpy；可选地从 ``SCHEDA_NUMPY_PATH`` 借一份。
 
     向量臂是可选功能：没有 numpy 时这里抛 ImportError，调用方把它变成一条 note
     并退回纯词法检索 —— 不会崩，也不会静默改变排序。
@@ -104,10 +105,10 @@ def _numpy():
         return numpy
     except Exception:
         pass
-    extra = os.environ.get("DSH_KB_NUMPY_PATH")
+    extra = os.environ.get("SCHEDA_NUMPY_PATH")
     if not extra:
         raise ImportError(
-            "the vector arm needs numpy: install it, or point DSH_KB_NUMPY_PATH at a "
+            "the vector arm needs numpy: install it, or point SCHEDA_NUMPY_PATH at a "
             "directory that contains it"
         )
     import sys
@@ -124,12 +125,12 @@ GENERATE = "http://127.0.0.1:11434/api/generate"
 def hyde_remote(question: str, max_tokens: int = 160, timeout: float = 30.0) -> str | None:
     """让一个 OpenAI-compatible chat endpoint 写「假想答案」（HyDE）。
 
-    需要 ``DSH_KB_HYDE_ENDPOINT`` / ``DSH_KB_HYDE_API_KEY`` / ``DSH_KB_HYDE_MODEL``；
+    需要 ``SCHEDA_HYDE_ENDPOINT`` / ``SCHEDA_HYDE_API_KEY`` / ``SCHEDA_HYDE_MODEL``；
     缺任何一个都返回 None，调用方退回纯查询向量（HyDE 本身默认关闭）。
     """
-    base = (os.environ.get("DSH_KB_HYDE_ENDPOINT") or "").rstrip("/")
-    key = os.environ.get("DSH_KB_HYDE_API_KEY") or ""
-    model = os.environ.get("DSH_KB_HYDE_MODEL") or ""
+    base = (os.environ.get("SCHEDA_HYDE_ENDPOINT") or "").rstrip("/")
+    key = os.environ.get("SCHEDA_HYDE_API_KEY") or ""
+    model = os.environ.get("SCHEDA_HYDE_MODEL") or ""
     if not (base and key and model):
         return None
     try:
@@ -334,7 +335,7 @@ class VectorArm:
             vec = _embed_texts([text], is_query=True)[0]
             return self.np.asarray(vec, dtype="<f4")
         body = json.dumps({
-            "model": self.model or os.environ.get("DSH_KB_EMBED_MODEL", "bge-m3"),
+            "model": self.model or os.environ.get("SCHEDA_EMBED_MODEL", "bge-m3"),
             "input": [text],
             "keep_alive": self.keep_alive,
         }).encode("utf-8")
@@ -404,7 +405,7 @@ class ImageArm:
     缓存，归一化后用点积当余弦。区别是这里**没有**页级去重 —— 一张图就是一张图。
 
     本类只负责「图片空间里的排序」；库路径、模型、维度、凭据读取都在
-    :mod:`dsh_kb.image_embed`，本模块不碰密钥。
+    :mod:`scheda.image_embed`，本模块不碰密钥。
     """
 
     def __init__(self, db: Path | str, timeout: float = 10.0):
@@ -486,16 +487,16 @@ def _env_flag(name: str) -> bool | None:
 def _image_settings(cfg) -> tuple[bool, float, Path]:
     """宽读图片侧车配置：缺字段就用默认值（不依赖配置层先长字段）。
 
-    取值优先级与仓库其余 rag 项一致：``DSH_KB_RAG_<FIELD>`` 环境变量覆盖
+    取值优先级与仓库其余 rag 项一致：``SCHEDA_RAG_<FIELD>`` 环境变量覆盖
     ``config.json``。当前 ``config.py`` 已有 ``image_arm_enabled/weight/db``
     三个字段；宽读保留是为了「旧配置 + 新代码」「新配置 + 旧测试替身」都能跑。
     """
     # 注意：能读到这里不代表检索一定会走进来 —— index.py 的 need_vector 门控
     # 还要求 vector_enabled 且（vector_always 或 FTS 未满额或弱命中留槽）。
     # 详见 augment() 顶部注释与 docs/semantic-arm.md「触发条件」。
-    env_enabled = _env_flag("DSH_KB_RAG_IMAGE_ARM_ENABLED")
+    env_enabled = _env_flag("SCHEDA_RAG_IMAGE_ARM_ENABLED")
     enabled = bool(getattr(cfg.rag, "image_arm_enabled", False)) if env_enabled is None else env_enabled
-    raw_weight = os.environ.get("DSH_KB_RAG_IMAGE_ARM_WEIGHT")
+    raw_weight = os.environ.get("SCHEDA_RAG_IMAGE_ARM_WEIGHT")
     if raw_weight is None:
         raw_weight = getattr(cfg.rag, "image_arm_weight", DEFAULT_IMAGE_WEIGHT)
     try:
@@ -504,8 +505,8 @@ def _image_settings(cfg) -> tuple[bool, float, Path]:
         weight = DEFAULT_IMAGE_WEIGHT
     if weight < 0:
         weight = DEFAULT_IMAGE_WEIGHT
-    db = (os.environ.get("DSH_KB_RAG_IMAGE_ARM_DB")
-          or os.environ.get("DSH_KB_RAG_IMAGE_DB")  # 旧名，保留兼容
+    db = (os.environ.get("SCHEDA_RAG_IMAGE_ARM_DB")
+          or os.environ.get("SCHEDA_RAG_IMAGE_DB")  # 旧名，保留兼容
           or getattr(cfg.rag, "image_db", None)
           or _default_image_db(cfg))
     return enabled, weight, Path(db)
@@ -518,7 +519,7 @@ def _default_image_db(cfg) -> Path:
         return Path(vd).parent / "vectors-image.sqlite"
     home = getattr(cfg, "home", None)
     if not home:
-        home = os.environ.get("DSH_KB_HOME") or "~/.dsh-kb"
+        home = os.environ.get("SCHEDA_HOME") or "~/.scheda"
     return Path(home).expanduser() / "index" / "vectors-image.sqlite"
 
 
@@ -530,13 +531,13 @@ def _image_prefixes(cfg, zone_prefixes: tuple[str, ...]) -> tuple[str, ...]:
     ``query_prefixes("z01")`` 里）。也就是说默认配置下图片路候选恒为 0 ——
     这不是接线错误，是「本库 z01 没有图源」。
 
-    ``rag.image_arm_prefixes``（或 ``DSH_KB_RAG_IMAGE_ARM_PREFIXES``，逗号分隔）
+    ``rag.image_arm_prefixes``（或 ``SCHEDA_RAG_IMAGE_ARM_PREFIXES``，逗号分隔）
     可以显式放宽前缀，让 z01 查询也能召回 z3 的图片。**默认关着**：z3 是
     skills 素材区（配色图、示例截图），与知识查询语义无关，而且让 z01 的结果
     里出现 z3 路径会破坏 zone 约定。除非 z01 真的有了图、或调用方明确要跨区
     取图，否则不要把 z3 加进来。
     """
-    raw = os.environ.get("DSH_KB_RAG_IMAGE_ARM_PREFIXES")
+    raw = os.environ.get("SCHEDA_RAG_IMAGE_ARM_PREFIXES")
     if raw is None:
         raw = getattr(cfg.rag, "image_arm_prefixes", None)
     if not raw:
@@ -610,7 +611,7 @@ def image_arm_readiness(cfg, *, db: Path | str | None = None, zone: str = "z01")
     前缀命中 + vector_always 打开」四条全满足时才是 True。
 
     用途：major-3/major-4 的验收数据都从这里出（CLI：
-    ``python3 -m dsh_kb.image_embed --readiness``）。
+    ``python3 -m scheda.image_embed --readiness``）。
     """
     enabled, weight, settings_db = _image_settings(cfg)
     db_path = Path(db) if db else settings_db
@@ -787,7 +788,7 @@ def augment(cfg, query: str, limit: int, existing: list, snippet_chars: int, zon
                     import os as _os
                     _len2 = int(getattr(cfg.rag, 'rerank_stage2_maxlen', 384) or 384)
                     _ch2 = int(getattr(cfg.rag, 'rerank_stage2_chars', 800) or 800)
-                    _os.environ['DSH_KB_RERANK_MAXLEN'] = str(_len2)
+                    _os.environ['SCHEDA_RERANK_MAXLEN'] = str(_len2)
                     _rr._SESSION = None  # 让 rerank 用新截断重建 tokenizer/session
                     _head2 = ranked[:5]
                     _pass2 = [_snippet(cfg.mirror_dir, h[0], h[1], _ch2) for h in _head2]

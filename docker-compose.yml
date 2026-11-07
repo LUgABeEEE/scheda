@@ -1,0 +1,102 @@
+# =============================================================================
+# scheda — single-service Compose deployment
+#
+# Layout, taken from src/scheda/config.py:
+#   /data  = SCHEDA_HOME: state only (mirror/, index/kb.sqlite, state/manifest.json,
+#            logs/, config.json).  This is the named volume `kb-home`.
+#   /kb    = the source bundle (shared NAS directory or a local dir on the host).
+#            Read-only: `refresh` only reads it.  `push` writes `_incoming/`,
+#            which is the one operation that needs a writable mount — add it
+#            separately instead of making the whole share writable (docs §9.2).
+#
+# Scheduled refresh: there is no `refresh` service in this file.  Run it from
+# the host instead, either from cron/systemd (deploy/systemd/) or with Compose:
+#
+#     docker compose run --rm scheda refresh --quiet
+#
+# That one command is `sync` + `index` and returns non-zero on failure, which is
+# all a scheduler needs (docs/deployment.md §2).  It reuses the same image and
+# the same `kb-home` volume, so the long-running service below picks the fresh
+# index up without a restart.
+# =============================================================================
+name: scheda
+
+services:
+  scheda:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # args:
+      #   WITH_SMBCLIENT: "1"        # only for SCHEDA_SOURCE=smb
+    image: scheda:0.7.0
+    container_name: scheda
+
+    # The only long-running command is the MCP server: newline-delimited
+    # JSON-RPC on stdin/stdout (src/scheda/mcp_server.py `serve`).  It exits as
+    # soon as stdin reaches EOF, so `stdin_open` is mandatory — without it the
+    # container would start and stop in the same second.
+    command: ["mcp"]
+    stdin_open: true
+    tty: false
+
+    restart: unless-stopped
+
+    environment:
+      # state root — must match the `kb-home` mount point below
+      SCHEDA_HOME: /data
+
+      # ---- source selection (config.py `load_config` / `source_available`) ----
+      # `auto` probes mount → local → smb (needs smbclient) → webdav, in that
+      # order, and reports "no source configured" instead of failing hard when
+      # nothing is mounted yet — so the container is deployable before the NAS
+      # wiring is finished.
+      SCHEDA_SOURCE: auto
+      # Explicit alternatives (uncomment exactly one and mount the matching path):
+      # SCHEDA_SOURCE: local
+      # SCHEDA_LOCAL_ROOT: /kb
+      # SCHEDA_SOURCE: mount
+      # SCHEDA_MOUNT: /kb
+      # SCHEDA_SOURCE: webdav
+      # SCHEDA_WEBDAV_ROOT: https://nas.example.com:5000/webdav/kb
+      # SCHEDA_WEBDAV_USER: kb-reader          # password: see docs §8
+      #   (prefer SCHEDA_WEBDAV_CREDENTIALS or a compose `secrets:` entry over
+      #    a literal password in this file)
+
+      # A search older than this silently triggers an incremental refresh first
+      # (config.py `stale_minutes`, default 15).
+      SCHEDA_STALE_MINUTES: "15"
+
+    volumes:
+      # Persistent state. Named volume, not a bind mount: it holds the FTS5
+      # index and a full copy of the bundle, both derived — losing it costs one
+      # `refresh`, and it must never be shared between machines (docs §1).
+      - kb-home:/data
+
+      # NAS share, read-only — uncomment and point at your mount. This is what
+      # `refresh` reads; nothing here is ever written back.
+      # - /mnt/nas/kb:/kb:ro
+
+      # Only if you use `push` (proposals go to <source>/_incoming/): mount the
+      # writable outbox sub-directory, not the whole share.
+      # - /mnt/nas/kb/outbox:/kb/_incoming:rw
+
+    # Healthcheck comes from the Dockerfile (scheda status --json). Override only
+    # to relax it for a very slow WebDAV source:
+    # healthcheck:
+    #   test: ["CMD", "scheda", "--home", "/data", "status", "--json"]
+    #   interval: 60s
+    #   timeout: 15s
+    #   retries: 3
+
+    # No published ports: the transport is stdio, not a socket. An agent host
+    # spawns its own short-lived container against the same volume instead:
+    #   docker run -i --rm -v scheda_kb-home:/data scheda:0.7.0 mcp
+    # (or `docker attach scheda` if it must talk to this exact process).
+
+    # State is bounded by the bundle size; this is a guard, not a tuning knob.
+    # mem_limit: 512m
+    # cpus: 1.0
+
+volumes:
+  kb-home:
+    # `docker compose down -v` deletes the mirror and index. Keep the volume.

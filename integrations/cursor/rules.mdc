@@ -1,0 +1,13 @@
+---
+description: Consult the local scheda knowledge base before answering from scratch
+globs:
+alwaysApply: false
+---
+
+# Local knowledge base
+
+An MCP server named `kb` exposes `search` / `read` / `status` / `skills`.
+
+Call `search` when the question is about past decisions, runbooks, environment
+facts, or project history. One call, not per turn. Expand a hit with `read`
+before quoting — the snippet is 240 characters, not the page. Cite `path:line`.

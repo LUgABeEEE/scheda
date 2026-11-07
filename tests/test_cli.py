@@ -4,7 +4,7 @@ These exist because a missing import in the CLI wiring (``describe_path``) was
 only caught by running the command by hand.  Every command is invoked through
 ``main()`` here, so a broken import or an argparse mistake fails the suite.
 
-The environment is configured entirely through ``DSH_KB_*`` variables, which is
+The environment is configured entirely through ``SCHEDA_*`` variables, which is
 also how a deployment with no config file would run.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from dsh_kb.cli import main  # noqa: E402
+from scheda.cli import main  # noqa: E402
 
 FIXTURE = {
     "index.md": "---\nokf_version: \"0.2\"\n---\n\n# Index\n\n* [z0](z0-public/) - notes\n",
@@ -54,7 +54,7 @@ def vec_row(rid: int, path: str, *, model: str | None = "bge-m3",
 
 class TestCli(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="dsh-kb-cli-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="scheda-cli-"))
         self.bundle = self.tmp / "share"
         for rel, text in FIXTURE.items():
             path = self.bundle / rel
@@ -65,16 +65,16 @@ class TestCli(unittest.TestCase):
         # 绝不读到真实知识库的库文件，也不因为这台机器恰好有/没有向量而变绿变红。
         self._env_backup = {
             key: os.environ.get(key)
-            for key in ("DSH_KB_HOME", "DSH_KB_SOURCE", "DSH_KB_LOCAL_ROOT",
-                        "DSH_KB_RAG_VECTORS_DB", "DSH_KB_RAG_OLLAMA", "DSH_KB_RAG_ENABLED")
+            for key in ("SCHEDA_HOME", "SCHEDA_SOURCE", "SCHEDA_LOCAL_ROOT",
+                        "SCHEDA_RAG_VECTORS_DB", "SCHEDA_RAG_OLLAMA", "SCHEDA_RAG_ENABLED")
         }
-        os.environ["DSH_KB_HOME"] = str(self.home)
-        os.environ["DSH_KB_SOURCE"] = "local"
-        os.environ["DSH_KB_LOCAL_ROOT"] = str(self.bundle)
+        os.environ["SCHEDA_HOME"] = str(self.home)
+        os.environ["SCHEDA_SOURCE"] = "local"
+        os.environ["SCHEDA_LOCAL_ROOT"] = str(self.bundle)
         # 默认把向量库指到一个不存在的路径、并关掉 ollama 探测：测试既不该读真库，
         # 也不该因为这台机器恰好有/没有向量而变绿或变红。
-        os.environ["DSH_KB_RAG_VECTORS_DB"] = str(self.tmp / "no-such-vectors.sqlite")
-        os.environ["DSH_KB_RAG_OLLAMA"] = "-"
+        os.environ["SCHEDA_RAG_VECTORS_DB"] = str(self.tmp / "no-such-vectors.sqlite")
+        os.environ["SCHEDA_RAG_OLLAMA"] = "-"
 
     def tearDown(self):
         for key, value in self._env_backup.items():
@@ -135,7 +135,7 @@ class TestCli(unittest.TestCase):
             con.commit()
         finally:
             con.close()
-        os.environ["DSH_KB_RAG_VECTORS_DB"] = str(path)
+        os.environ["SCHEDA_RAG_VECTORS_DB"] = str(path)
         return path
 
     @staticmethod
@@ -460,7 +460,7 @@ class TestCli(unittest.TestCase):
             def read(self, rel):  # pragma: no cover - must not be reached
                 raise AssertionError("read-only push must not read the remote")
 
-        with mock.patch("dsh_kb.cli.open_configured_source", return_value=_NoWrite()):
+        with mock.patch("scheda.cli.open_configured_source", return_value=_NoWrite()):
             code, _, err = self.run_cli("push")
         self.assertEqual(code, 2)
         self.assertIn("read-only", err)
@@ -556,7 +556,7 @@ class TestCli(unittest.TestCase):
         self.assertEqual(code, 10, text)
         self.assertIn("向量库不存在", out)
         self.assertIn("向量构建器", text, "要说清怎么生成向量")
-        self.assertIn("DSH_KB_RAG_VECTORS_DB", text)
+        self.assertIn("SCHEDA_RAG_VECTORS_DB", text)
 
     def test_rag_check_json_shape_and_dry_run_estimate(self):
         rows = [vec_row(i, path) for i, path in enumerate(INDEXED_PATHS, 1)]
@@ -601,11 +601,11 @@ class TestCli(unittest.TestCase):
     def test_rag_check_prune_refuses_a_foreign_vector_store(self):
         """复现 2026-10-19 00:39 的事故：sandbox home + 外部（默认生产路径）向量库。
 
-        当时漏设 DSH_KB_RAG_VECTORS_DB，prune 拿 sandbox 的 5 页索引当对照面，把外部
+        当时漏设 SCHEDA_RAG_VECTORS_DB，prune 拿 sandbox 的 5 页索引当对照面，把外部
         库 5,521 行全删了。这里断言：默认拒绝（exit 11）、外部库 sha256/大小/mtime
         完全未变、人读与 --json 都给原因/比例/两条路径/解锁方式。
         """
-        external_dir = Path(tempfile.mkdtemp(prefix="dsh-kb-external-"))
+        external_dir = Path(tempfile.mkdtemp(prefix="scheda-external-"))
         self.addCleanup(shutil.rmtree, external_dir, True)
         external = external_dir / "vectors.sqlite"
         rows = [vec_row(1, "z0-public/mount.md")]
@@ -754,7 +754,7 @@ class TestCli(unittest.TestCase):
         db = self._vectors_db()
         db.parent.mkdir(parents=True, exist_ok=True)
         db.write_text("this is not a database", encoding="utf-8")
-        os.environ["DSH_KB_RAG_VECTORS_DB"] = str(db)
+        os.environ["SCHEDA_RAG_VECTORS_DB"] = str(db)
         self.index_mirror()
 
         code, out, err = self.run_cli("rag-check", "--json")
@@ -801,7 +801,7 @@ class TestCli(unittest.TestCase):
 
     def test_doctor_warns_when_ollama_is_unreachable(self):
         self.write_vectors([vec_row(i, path) for i, path in enumerate(INDEXED_PATHS, 1)])
-        os.environ["DSH_KB_RAG_OLLAMA"] = "http://127.0.0.1:1"      # 必然拒连
+        os.environ["SCHEDA_RAG_OLLAMA"] = "http://127.0.0.1:1"      # 必然拒连
         self.index_mirror()
 
         code, out, _ = self.run_cli("doctor", "--json")
@@ -831,7 +831,7 @@ class TestCli(unittest.TestCase):
             kwargs["factory"] = Recording
             return real_connect(*args, **kwargs)
 
-        with mock.patch("dsh_kb.ragcheck.sqlite3.connect", side_effect=connect):
+        with mock.patch("scheda.ragcheck.sqlite3.connect", side_effect=connect):
             code, out, err = self.run_cli("doctor", "--json")
 
         self.assertEqual(code, 0, err)
@@ -884,7 +884,7 @@ class TestCli(unittest.TestCase):
         self.assertIn("totally_unknown", checks["config keys"]["detail"])
 
     def test_unknown_source_is_reported_not_raised(self):
-        os.environ["DSH_KB_LOCAL_ROOT"] = str(self.tmp / "does-not-exist")
+        os.environ["SCHEDA_LOCAL_ROOT"] = str(self.tmp / "does-not-exist")
         code, out, err = self.run_cli("sync")
         self.assertNotEqual(code, 0)
         self.assertIn("not a directory", err)

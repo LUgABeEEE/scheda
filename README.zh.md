@@ -1,11 +1,14 @@
-# dsh-kb
+# scheda
+
+> **0.9.0 起由 dsh-kb 更名而来。** `dsh-kb` 现在是「DSH 专用适配插件」的名字，核心在这里。
+> 旧命令 `dsh-kb` 仍由本包提供，`DSH_KB_*` 环境变量仍会被读取。
 
 **一个给 AI agent 用的个人知识库：真源放在共享盘，本机留镜像与索引，检索又快又能离线。**
 
 [English](README.md) | 中文
 
-[![CI](https://github.com/LUgABeEEE/dsh-kb/actions/workflows/ci.yml/badge.svg)](https://github.com/LUgABeEEE/dsh-kb/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/dsh-kb.svg)](https://pypi.org/project/dsh-kb/)
+[![CI](https://github.com/LUgABeEEE/scheda/actions/workflows/ci.yml/badge.svg)](https://github.com/LUgABeEEE/scheda/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/scheda.svg)](https://pypi.org/project/scheda/)
 
 ---
 
@@ -17,13 +20,13 @@
 
 **成本**：Python ≥ 3.10，**一个依赖**（[`handrolled`](https://github.com/LUgABeEEE/handrolled)，
 它本身纯标准库、无编译扩展）——没有守护进程、没有服务端、不碰数据库服务、
-不需要 root，一条命令一个进程。状态（镜像 + 索引）在 `~/.dsh-kb` 下，约是 bundle
+不需要 root，一条命令一个进程。状态（镜像 + 索引）在 `~/.scheda` 下，约是 bundle
 体积的 1.9 倍；索引在本地，所以共享盘慢或离线只影响新鲜度，不影响可用性。
 
 **两分钟试起来**（不需要共享盘、不需要写配置文件）：
 
 ```bash
-git clone https://github.com/LUgABeEEE/dsh-kb && cd dsh-kb
+git clone https://github.com/LUgABeEEE/scheda && cd scheda
 bash examples/demo.sh          # 造一个临时 bundle、建索引、搜一次
 ```
 
@@ -38,7 +41,7 @@ bash examples/demo.sh          # 造一个临时 bundle、建索引、搜一次
 2. 把大量原文**塞进上下文** → 贵（实测某部署平均每请求重发 **23 万 tokens** 上下文）；
 3. 找不到就说"我没有相关信息"。
 
-dsh-kb 把这件事收敛成一条路径：
+scheda 把这件事收敛成一条路径：
 
 ```
 共享盘上的一个 Markdown 目录  ←（唯一真源）
@@ -76,8 +79,15 @@ agent 调 search / read 拿"路径 + 行号 + 240 字符片段"
 （[`handrolled`](https://github.com/LUgABeEEE/handrolled) —— 本项目的文本/WebDAV/挂载/导入层抽出去的那个纯标准库工具箱）：
 
 ```bash
-pip install -e .          # 或直接 PYTHONPATH=src python3 -m dsh_kb
-dsh-kb --version
+pip install scheda        # 从 PyPI 装——最短路径
+pip install -e .          # 或从源码；或直接 PYTHONPATH=src python3 -m scheda
+scheda --version
+```
+
+从源码跑测试前先装那唯一一个依赖（`pip install -e .` 已经带上了）：
+
+```bash
+python3 -m unittest discover -s tests -t .     # 546 个测试，约 15 秒，全离线
 ```
 
 ---
@@ -99,7 +109,7 @@ dsh-kb --version
 
 ### 2. 配置
 
-配置放在 `~/.dsh-kb/config.json`（**刻意放在代码仓库之外**，公开 clone 不会带上你的路径）：
+配置放在 `~/.scheda/config.json`（**刻意放在代码仓库之外**，公开 clone 不会带上你的路径）：
 
 ```json
 {
@@ -122,12 +132,12 @@ dsh-kb --version
 ### 3. 拉取、建索引、检索
 
 ```bash
-dsh-kb doctor                      # 先自检：源可达？镜像干净？索引在？
-dsh-kb refresh                     # sync + index，定时任务调这个
-dsh-kb search "挂载点失效" -n 5     # 默认只搜 z0/z1 + _meta/_incoming
-dsh-kb search "UNIQ-000123" --json  # 机器可读
-dsh-kb read z0-public/mount.md --start 1 --lines 40
-dsh-kb push                        # 把本地 _incoming/ 的提案推上去
+scheda doctor                      # 先自检：源可达？镜像干净？索引在？
+scheda refresh                     # sync + index，定时任务调这个
+scheda search "挂载点失效" -n 5     # 默认只搜 z0/z1 + _meta/_incoming
+scheda search "UNIQ-000123" --json  # 机器可读
+scheda read z0-public/mount.md --start 1 --lines 40
+scheda push                        # 把本地 _incoming/ 的提案推上去
 ```
 
 **只有 `sync` / `push` / `doctor` 会写共享盘**（其中 `doctor` 只写两个探针文件，
@@ -144,7 +154,7 @@ dsh-kb push                        # 把本地 _incoming/ 的提案推上去
 | `z0-public` | ✅ | ✅ | ✅ |
 | `z1-restricted` | ✅ | ✅ | ✅（`inject` 标记为 false，供注入方参考） |
 | `z2-sensitive` | ❌ **连拉都不拉** | ❌ | ❌（需显式 `--zone z2`） |
-| `z3-skills` | ✅ | ❌ **永不进索引**（需先注册） | ❌（另有入口 `dsh-kb skills`；2.3k 个 `SKILL.md` 会把检索淹没） |
+| `z3-skills` | ✅ | ❌ **永不进索引**（需先注册） | ❌（另有入口 `scheda skills`；2.3k 个 `SKILL.md` 会把检索淹没） |
 | `_meta/`、`_incoming/` | ✅ | ✅ | ✅（是布局，不是隐私内容） |
 | 命中 `never` 列表的路径 | ❌ | ❌ | ❌ |
 
@@ -161,6 +171,7 @@ dsh-kb push                        # 把本地 _incoming/ 的提案推上去
 
 | 命令 | 会写吗 | 说明 |
 |---|---|---|
+| `init [--force]` | ✔ 建 home 与配置 | 首次运行：状态目录、配置骨架、以及接下来要跑的四条命令（已有配置时非 `--force` 拒绝覆盖） |
 | `status` | — | 配置、源、镜像与索引状态、新鲜度 |
 | `doctor` | ✔ 写探针 | 逐项自检并给可执行结论（含"镜像里有没有本该排除的路径"）；会写两个探针文件，见下 |
 | `diff [--incoming-days DAYS] [--json]` | —（读源清单） | 只读体检：远端变化、本地镜像缺口、索引漂移、提案积压、冲突副本、越界 |
@@ -175,8 +186,9 @@ dsh-kb push                        # 把本地 _incoming/ 的提案推上去
 | `import --from PATH [--format NAME] --prefix P [--zone Z] [--write]` | 仅 `--write` | 把别的工具的导出变成页面 —— 见 [docs/import.md](docs/import.md) |
 | `push [files…] [--force] [--expect SHA256] [--log [N]] [--allow-undeclared] [--json]` | ✔ | 上传 `_incoming/` 提案（可能被取代闸门整批拦下） |
 | `mcp` | — | 在 stdio 上跑 MCP 服务器（给 agent 宿主用） |
+| `web [--bind HOST] [--port PORT]` | — | 只读界面：状态、搜索、读页、`/healthz`（默认只绑 localhost，无鉴权） |
 
-全局 flag 写在子命令前后都可以（`dsh-kb --json status` ≡ `dsh-kb status --json`）。
+全局 flag 写在子命令前后都可以（`scheda --json status` ≡ `scheda status --json`）。
 
 **不是所有"诊断"命令都是严格只读的。** 唯一的例外是 `doctor`：它会在 `home` 里
 创建再删掉一个探针文件；源支持探写时，还会在共享盘的 `_incoming/` 下写一个探针
@@ -184,7 +196,7 @@ dsh-kb push                        # 把本地 _incoming/ 的提案推上去
 **别把它塞进"必须严格只读"的位置。**
 
 **取代关系是一等公民。** 页面可以在 front matter 里写 `supersedes: [...]` 或
-`superseded_by: <path>`，`dsh-kb supersede-check` 报告这种关系坏掉的四种样子：单向
+`superseded_by: <path>`，`scheda supersede-check` 报告这种关系坏掉的四种样子：单向
 （对方不认账）、成环、指向不存在的页、一页被两个后继认领。同一条关系还是**写入口的
 闸门**：提案标题与现行页撞车、又没写 `supersedes:` 或 `not_superseding: "<理由>"` 时，
 `push` 会把整批拒绝（`--allow-undeclared` 是显式绕过）。在写入口问一句，比半年后
@@ -196,7 +208,7 @@ dsh-kb push                        # 把本地 _incoming/ 的提案推上去
 
 ### 两份报告到底比什么
 
-`dsh-kb diff` 比**两对东西、两个方向**，两边都按文件类型拆成 `markdown` / `other`，
+`scheda diff` 比**两对东西、两个方向**，两边都按文件类型拆成 `markdown` / `other`，
 免得图片/JSON 的日常变动把 `.md` 的差异淹掉：
 
 * *远端清单 vs 快照* → `content`：共享盘上变了什么。**只报告、永不告警**——下一次
@@ -206,7 +218,7 @@ dsh-kb push                        # 把本地 _incoming/ 的提案推上去
   （退出码 10）——以前它是隐形的：远端和快照都没变，而 `sync` 会立刻把它取回来。
   本地多出来的文件只计数、不告警：`sync --prune` 删不掉它们，得人来决定。
 
-`dsh-kb rag-check` 同时按**页**（`path`）和**块**（`chunk_id`）比对向量库与索引。
+`scheda rag-check` 同时按**页**（`path`）和**块**（`chunk_id`）比对向量库与索引。
 块级口径抓的是"一页 5 块只嵌了 2 块"——这种形状下页级计数全是 0。块身份是
 **内容寻址**的 `chunk_id`（见下节），所以"同一块被编辑过"和"同一块挪了位置"能
 分开报；两侧身份不同（例如索引已迁、向量库还没迁）时退化成页级，并在 `note` 里
@@ -245,25 +257,25 @@ rid      = (int(chunk_id, 16) >> 4) + 1         -- FTS5 只吃整数 rowid，故
 
 | 键 | 环境变量 | 默认 | 说明 |
 |---|---|---|---|
-| `source` | `DSH_KB_SOURCE` | `auto` | `auto` / `local` / `mount` / `smb` / `webdav` |
-| `mount` | `DSH_KB_MOUNT` | — | 挂载点（Samba/CIFS、NFS 或普通目录） |
-| `local_root` | `DSH_KB_LOCAL_ROOT` | — | 本地目录（测试与单机都靠它） |
-| `smb_share` | `DSH_KB_SMB_SHARE` | — | 不挂载直连共享，如 `//host/share`（需 `smbclient`） |
-| `webdav_root` | `DSH_KB_WEBDAV_ROOT` | — | WebDAV 集合 URL |
-| `stale_minutes` | `DSH_KB_STALE_MINUTES` | `15` | 超过则 `search` 前静默刷新 |
-| `mtime_tolerance` | `DSH_KB_MTIME_TOLERANCE` | `1.0` | 多大的 mtime 差仍算"未变" |
-| `snippet_chars` | `DSH_KB_SNIPPET_CHARS` | `240` | 片段宽度 |
-| `default_limit` | `DSH_KB_DEFAULT_LIMIT` | `8` | 命中条数 |
+| `source` | `SCHEDA_SOURCE` | `auto` | `auto` / `local` / `mount` / `smb` / `webdav` |
+| `mount` | `SCHEDA_MOUNT` | — | 挂载点（Samba/CIFS、NFS 或普通目录） |
+| `local_root` | `SCHEDA_LOCAL_ROOT` | — | 本地目录（测试与单机都靠它） |
+| `smb_share` | `SCHEDA_SMB_SHARE` | — | 不挂载直连共享，如 `//host/share`（需 `smbclient`） |
+| `webdav_root` | `SCHEDA_WEBDAV_ROOT` | — | WebDAV 集合 URL |
+| `stale_minutes` | `SCHEDA_STALE_MINUTES` | `15` | 超过则 `search` 前静默刷新 |
+| `mtime_tolerance` | `SCHEDA_MTIME_TOLERANCE` | `1.0` | 多大的 mtime 差仍算"未变" |
+| `snippet_chars` | `SCHEDA_SNIPPET_CHARS` | `240` | 片段宽度 |
+| `default_limit` | `SCHEDA_DEFAULT_LIMIT` | `8` | 命中条数 |
 | `zones` / `never` | — | 见上文 | 分区策略与排除清单 |
-| `rag.*` | `DSH_KB_RAG_*` | 全部关闭 | 可选语义臂 —— 见 [docs/semantic-arm.md](docs/semantic-arm.md) |
+| `rag.*` | `SCHEDA_RAG_*` | 全部关闭 | 可选语义臂 —— 见 [docs/semantic-arm.md](docs/semantic-arm.md) |
 
 WebDAV 的密钥**只从环境或凭据文件读**，不写进 `config.json`：
 
 ```bash
-export DSH_KB_WEBDAV_USER=me
-export DSH_KB_WEBDAV_PASSWORD=...            # 或 DSH_KB_WEBDAV_CREDENTIALS=<key=value 文件>
-export DSH_KB_WEBDAV_CERT=... DSH_KB_WEBDAV_KEY=... DSH_KB_WEBDAV_CA=...   # 需要 mTLS 时
-export DSH_KB_WEBDAV_CONNECT=192.0.2.10      # 证书 CN 与地址不同时：连 IP、TLS 用 CN
+export SCHEDA_WEBDAV_USER=me
+export SCHEDA_WEBDAV_PASSWORD=...            # 或 SCHEDA_WEBDAV_CREDENTIALS=<key=value 文件>
+export SCHEDA_WEBDAV_CERT=... SCHEDA_WEBDAV_KEY=... SCHEDA_WEBDAV_CA=...   # 需要 mTLS 时
+export SCHEDA_WEBDAV_CONNECT=192.0.2.10      # 证书 CN 与地址不同时：连 IP、TLS 用 CN
 ```
 
 ---
@@ -288,10 +300,10 @@ export DSH_KB_WEBDAV_CONNECT=192.0.2.10      # 证书 CN 与地址不同时：�
 
 | 阶段 | 代价 | 做什么 |
 |---|---|---|
-| 同义词扩展（`DSH_KB_DICT=1` + 词表） | 毫秒级，零模型调用 | 把用户输入的说法换成语料里的说法 |
+| 同义词扩展（`SCHEDA_DICT=1` + 词表） | 毫秒级，零模型调用 | 把用户输入的说法换成语料里的说法 |
 | 查询改写 | 一次本地模型调用，按查询缓存 | 让模型给出几种别的问法，再合并 |
 
-两者都**只补空位**（`DSH_KB_MERGE=fill`，默认）——变体永远不会挤掉原查询找到的命中。
+两者都**只补空位**（`SCHEDA_MERGE=fill`，默认）——变体永远不会挤掉原查询找到的命中。
 也测过纯 RRF 融合：50 题 gold 上把 page@5 从 0.580 拉到 0.440，所以默认是 `fill`，
 `top2` 需要显式开。
 
@@ -324,7 +336,7 @@ export DSH_KB_WEBDAV_CONNECT=192.0.2.10      # 证书 CN 与地址不同时：�
 
 **定位：补充，不是前置上下文。** 不自动注入、不做每轮检索；只在真需要往事、环境事实或历史时调用一次。
 
-两种形态，同一份实现（`dsh_kb.service`），所以输出结构不会漂移：
+两种形态，同一份实现（`scheda.service`），所以输出结构不会漂移：
 
 | 形态 | 何时用 | 代价 |
 |---|---|---|
@@ -332,7 +344,7 @@ export DSH_KB_WEBDAV_CONNECT=192.0.2.10      # 证书 CN 与地址不同时：�
 | **MCP 服务器（stdio）** | 宿主支持 MCP（推荐） | 常驻 **≈ 556 tokens/次**（`tools/list` 2099 字符含 annotations + 指令 125 字符，实测），每次调用少一层包装 |
 
 ```bash
-dsh-kb mcp            # 在 stdin/stdout 上讲 JSON-RPC，暴露 search / read / status / skills
+scheda mcp            # 在 stdin/stdout 上讲 JSON-RPC，暴露 search / read / status / skills
 ```
 
 接进 DSH 是一条 `insert`（其它宿主见 [docs/agent-integration.md](docs/agent-integration.md)）：
@@ -344,13 +356,13 @@ dsh-kb mcp            # 在 stdin/stdout 上讲 JSON-RPC，暴露 search / read 
     serverName: kb
     transport: stdio
     command: python3
-    args: [-m, dsh_kb, mcp, --home, /srv/dsh-kb, --source, auto, --mount, /mnt/nas/kb]
-    env: { PYTHONPATH: /opt/dsh-kb/src }
+    args: [-m, scheda, mcp, --home, /srv/scheda, --source, auto, --mount, /mnt/nas/kb]
+    env: { PYTHONPATH: /opt/scheda/src }
 ```
 
 > **为什么配置放 `args` 而不是 `env`**：有些宿主拉起 MCP 子进程时会清洗环境变量
 > （凭据形状的名字、过期的前缀），命令行参数不会被清洗。
-> 实测：把 `DSH_KB_*` 全部清空、只靠 `args`，对真实共享盘依然工作。
+> 实测：把 `SCHEDA_*` 全部清空、只靠 `args`，对真实共享盘依然工作。
 
 设计取舍（只留一个可选的 `deep` 开关、不给 `mode` 之类参数、不暴露写操作、失败以工具结果返回）
 见 [docs/design.md](docs/design.md#与-agent-集成)。
@@ -369,7 +381,7 @@ dsh-kb mcp            # 在 stdin/stdout 上讲 JSON-RPC，暴露 search / read 
 | ONNX 嵌入后端 | 约 610 MB 模型（A/B 实验） | 关 |
 | 深池重排（`deep=true`） | 一个 OpenAI-compatible 端点 + key | 关 |
 
-保持默认时，`import dsh_kb` 不碰任何第三方代码，检索结果与 0.1.0 逐字节一致。
+保持默认时，`import scheda` 不碰任何第三方代码，检索结果与 0.1.0 逐字节一致。
 开启前请先读 [docs/semantic-arm.md](docs/semantic-arm.md)：那里写了每层要什么、
 模型从哪来，以及**哪一层会把页面正文发到机器外**（是 `deep`；如果你的库里
 有"不愿粘进聊天框"的内容，就别开它）。
@@ -379,18 +391,18 @@ dsh-kb mcp            # 在 stdin/stdout 上讲 JSON-RPC，暴露 search / read 
 知识已经在别处时，`import` 把那份导出变成页面，而不是让你手工拷文件：
 
 ```bash
-dsh-kb import --from ~/notes/obsidian --format obsidian --prefix notes        # 只看会改什么
-dsh-kb import --from ~/notes/obsidian --format obsidian --prefix notes --write
-dsh-kb refresh
+scheda import --from ~/notes/obsidian --format obsidian --prefix notes        # 只看会改什么
+scheda import --from ~/notes/obsidian --format obsidian --prefix notes --write
+scheda refresh
 ```
 
 适配 `mem0`、Obsidian、Notion 的 Markdown 导出、basic-memory、通用 JSON/JSONL，
-以及 dsh-kb 自己的 `records/v1`。只增不删、确定性（再跑一次是空操作）、
+以及 scheda 自己的 `records/v1`。只增不删、确定性（再跑一次是空操作）、
 没 `--allow-public` 就拒绝写 `z0-public`。详见 [docs/import.md](docs/import.md)。
 
 ## 状态
 
-Alpha（0.6.0），已有 435 个测试（单元 + 端到端 + 传输层 + CLI 冒烟 + MCP，全部离线可跑）：
+Alpha（0.9.0），已有 546 个测试（单元 + 端到端 + 传输层 + CLI 冒烟 + MCP + 打包契约，全部离线可跑）：
 
 ```bash
 python3 -m unittest discover -s tests -t . -v
@@ -403,10 +415,12 @@ python3 -m unittest discover -s tests -t . -v
 
 - [x] MCP 服务器（`mcp__kb__search` / `read` / `status`）
 - [x] 语义回退：关键词零命中时才走本地嵌入检索 —— **可选、默认关闭**（[docs/semantic-arm.md](docs/semantic-arm.md)）
-- [ ] 定时刷新（systemd timer / cron 示例）
+- [x] 定时刷新（systemd unit + timer、cron、Windows 计划任务）—— `deploy/`
 - [ ] 中文嵌入质量评估，决定默认模型
-- [ ] 只读 HTTP 浏览界面（可选）
+- [x] 只读 HTTP 浏览界面 —— `scheda web`（纯标准库，无任何写接口）
 
-## License
+## 许可
 
-MIT，见 [LICENSE](LICENSE)。
+**AGPL-3.0-or-later** —— 见 [LICENSE](LICENSE)；闭源嵌入、OEM 白标与对外托管服务需 **商业许可**（见 [COMMERCIAL.md](COMMERCIAL.md)）。**组织内部自用不触发任何 AGPL 义务**，所以个人与内网部署与以前完全一样。
+
+**0.6.0 及之前的所有版本永久保持 MIT**（这项授权收不回来）；从 **0.8.0** 起为双协议。边界与理由见 [docs/licensing.md](docs/licensing.md)。

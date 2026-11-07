@@ -1,20 +1,20 @@
 # 接入 agent 宿主
 
-dsh-kb 对外有两种形态，选一个即可：
+scheda 对外有两种形态，选一个即可：
 
 | 形态 | 何时用 | 代价 |
 |---|---|---|
 | **CLI + `--json`** | 任何能跑命令的 agent | 一次子进程 + 一次工具往返（约 30 ms） |
 | **MCP 服务器（stdio）** | 宿主支持 MCP（推荐） | 常驻 schema ≈ 385 tokens，但每次调用少一层包装 |
 
-两条路走的是**同一份实现**（`dsh_kb.service`），所以输出结构不会漂移。
+两条路走的是**同一份实现**（`scheda.service`），所以输出结构不会漂移。
 
 ---
 
 ## MCP 服务器
 
 ```bash
-dsh-kb mcp                     # 或用 python -m dsh_kb mcp
+scheda mcp                     # 或用 python -m scheda mcp
 ```
 
 它在 **stdin/stdout** 上说换行分隔的 JSON-RPC 2.0，暴露四个工具：
@@ -44,39 +44,39 @@ dsh-kb mcp                     # 或用 python -m dsh_kb mcp
     command: python3
     args:
       - -m
-      - dsh_kb
+      - scheda
       - mcp
       - --home
-      - /srv/dsh-kb                 # 状态目录：镜像/索引/清单/日志/配置
+      - /srv/scheda                 # 状态目录：镜像/索引/清单/日志/配置
       - --source
       - auto                        # auto | local | mount | smb | webdav
       - --mount
       - /mnt/nas/kb                 # source=mount 时用
     env:
-      PYTHONPATH: /opt/dsh-kb/src   # 未 pip install 时
+      PYTHONPATH: /opt/scheda/src   # 未 pip install 时
 ```
 
 如果更愿意用环境变量（宿主不清洗时同样有效）：
 
 ```yaml
     env:
-      DSH_KB_HOME: /srv/dsh-kb
-      DSH_KB_SOURCE: mount
-      DSH_KB_MOUNT: /mnt/nas/kb
+      SCHEDA_HOME: /srv/scheda
+      SCHEDA_SOURCE: mount
+      SCHEDA_MOUNT: /mnt/nas/kb
 ```
 
 **WebDAV 的密钥只从环境/凭据文件读**，永远不要写进配置：
 
 ```yaml
     env:
-      DSH_KB_WEBDAV_ROOT: https://nas.example:5000/dav/kb
-      DSH_KB_WEBDAV_USER: me
-      DSH_KB_WEBDAV_PASSWORD: '***'
+      SCHEDA_WEBDAV_ROOT: https://nas.example:5000/dav/kb
+      SCHEDA_WEBDAV_USER: me
+      SCHEDA_WEBDAV_PASSWORD: '***'
       # mTLS 场景
-      DSH_KB_WEBDAV_CERT: /etc/dsh-kb/cert.pem
-      DSH_KB_WEBDAV_KEY: /etc/dsh-kb/key.pem
-      DSH_KB_WEBDAV_CA: /etc/dsh-kb/ca.pem
-      DSH_KB_WEBDAV_CONNECT: 192.0.2.10   # 证书 CN 与地址不同时：连 IP、TLS 用 CN
+      SCHEDA_WEBDAV_CERT: /etc/scheda/cert.pem
+      SCHEDA_WEBDAV_KEY: /etc/scheda/key.pem
+      SCHEDA_WEBDAV_CA: /etc/scheda/ca.pem
+      SCHEDA_WEBDAV_CONNECT: 192.0.2.10   # 证书 CN 与地址不同时：连 IP、TLS 用 CN
 ```
 
 ---
@@ -90,9 +90,9 @@ dsh-kb mcp                     # 或用 python -m dsh_kb mcp
   "mcpServers": {
     "kb": {
       "command": "python3",
-      "args": ["-m", "dsh_kb", "mcp", "--home", "/srv/dsh-kb",
+      "args": ["-m", "scheda", "mcp", "--home", "/srv/scheda",
                "--source", "mount", "--mount", "/mnt/nas/kb"],
-      "env": { "PYTHONPATH": "/opt/dsh-kb/src" }
+      "env": { "PYTHONPATH": "/opt/scheda/src" }
     }
   }
 }
@@ -148,16 +148,16 @@ dsh-kb mcp                     # 或用 python -m dsh_kb mcp
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-| dsh-kb mcp
+| scheda mcp
 
 # 2) 真正的检索能不能命中（打真库）
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"挂载"}}}' \
-| dsh-kb mcp --home /srv/dsh-kb --source mount --mount /mnt/nas/kb
+| scheda mcp --home /srv/scheda --source mount --mount /mnt/nas/kb
 
 # 3) 与环境无关的自检
-dsh-kb doctor --home /srv/dsh-kb
+scheda doctor --home /srv/scheda
 ```
 
 接进宿主之后，再确认两件事：
@@ -172,7 +172,7 @@ dsh-kb doctor --home /srv/dsh-kb
 | 症状 | 原因与处理 |
 |---|---|
 | 工具没出现在列表里 | 宿主可能**静默跳过**了这条 entry（配置解析失败）；查宿主日志与 `did not activate`，并手工跑上面的验证 ① |
-| `search` 报 `index missing` | 还没建索引：`dsh-kb refresh --home <home>` |
-| 结果一直是 `stale: true` | 源不可达：看 `note`（它会说明是掉线、只读、还是路径不对）；`dsh-kb doctor` 逐项给出结论 |
+| `search` 报 `index missing` | 还没建索引：`scheda refresh --home <home>` |
+| 结果一直是 `stale: true` | 源不可达：看 `note`（它会说明是掉线、只读、还是路径不对）；`scheda doctor` 逐项给出结论 |
 | stdout 里混进非 JSON | 宿主或包装脚本打印了东西——stdout 是协议通道，**只能有协议帧**；日志一律走 `--quiet` / 日志文件 |
 | 中文搜不到 | 用 ≥2 个字；单个拉丁标识符是**精确匹配**（不做松弛），短语与中文才会松弛 |

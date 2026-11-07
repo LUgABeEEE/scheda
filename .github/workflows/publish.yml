@@ -1,14 +1,21 @@
 name: Publish
 
-# Publishing runs in CI, not from a laptop: a published release builds, checks
-# and uploads automatically.
+# Publishing is driven by a tag, not by a laptop:
 #
-# Authentication is a repository secret, `PYPI_API_TOKEN` (a PyPI API token,
-# scoped to this project).  The tidier long-term option is Trusted Publishing
-# (OIDC), which needs a one-time "pending publisher" on PyPI — owner LUgABeEEE,
-# repository dsh-kb, workflow publish.yml, environment pypi.  Once that exists,
-# drop the `password:` line and add `permissions: id-token: write`.
+#     python -m pip install build && python -m build     # optional local check
+#     git tag -a v0.7.0 -m "scheda 0.7.0" && git push --follow-tags
+#
+# Authentication is **Trusted Publishing (OIDC)**: no token is stored in the
+# repository, and the upload job proves its identity to PyPI with a short-lived
+# OIDC token.  It requires a one-time "pending publisher" on PyPI —
+# owner LUgABeEEE, repository scheda, workflow publish.yml, environment pypi.
+#
+# The build step pins SOURCE_DATE_EPOCH so two builds of the same commit produce
+# byte-identical archives; an auditor asking "is the wheel on PyPI the one from
+# this tag?" can then answer it by rebuilding.
 on:
+  push:
+    tags: ["v*"]
   release:
     types: [published]
   workflow_dispatch:
@@ -28,21 +35,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # SOURCE_DATE_EPOCH comes from the commit
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build
+      - name: Build (reproducible)
         run: |
+          set -eu
           python -m pip install --quiet --upgrade build twine
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> "$GITHUB_ENV"
           python -m build
           python -m twine check dist/*
       - name: The wheel must install, resolve its one dependency, and run
         run: |
           python -m venv /tmp/verify
           /tmp/verify/bin/pip install --quiet dist/*.whl
-          /tmp/verify/bin/dsh-kb --version
-          /tmp/verify/bin/dsh-kb --help > /dev/null
-          /tmp/verify/bin/python -c "import dsh_kb; print('import ok', dsh_kb.__version__)"
+          /tmp/verify/bin/scheda --version
+          /tmp/verify/bin/scheda --help > /dev/null
+          /tmp/verify/bin/python -c "import scheda; print('import ok', scheda.__version__)"
+      - name: The tag and the version must agree
+        run: |
+          set -eu
+          tag="${GITHUB_REF_NAME#v}"
+          built="$(/tmp/verify/bin/scheda --version | awk '{print $2}')"
+          if [ "$tag" != "$built" ] && [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match scheda.__version__ $built"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -53,19 +74,19 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
+    permissions:
+      contents: read
+      id-token: write          # Trusted Publishing — no stored token
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
-      - name: Upload to TestPyPI
+      - name: Upload to TestPyPI (manual dispatch only)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'testpypi'
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
           repository-url: https://test.pypi.org/legacy/
       - name: Upload to PyPI
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'pypi')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'pypi')
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}

@@ -35,8 +35,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from dsh_kb import index  # noqa: E402
-from dsh_kb.config import Config  # noqa: E402
+from scheda import index  # noqa: E402
+from scheda.config import Config  # noqa: E402
 from handrolled.text import expand_for_index  # noqa: E402
 
 #: Corpus used by every test here.  Each page is longer than ``chunk_lines``
@@ -553,7 +553,7 @@ class TestLegacySchemaIsStillReadable(CasFixture):
         result = index.search(self.cfg, "anything")
         self.assertEqual(result.hits, [])
         self.assertIn("schema", result.note.lower())
-        self.assertIn("dsh-kb index", result.note)
+        self.assertIn("scheda index", result.note)
 
     def test_missing_index_still_reports_missing(self):
         result = index.search(self.cfg, "anything")

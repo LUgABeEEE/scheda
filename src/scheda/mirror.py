@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Mirror: a local, read-only copy of the authoritative bundle.
 
 The share is the **single source of truth**; the mirror is a derived cache.
@@ -83,9 +84,9 @@ def manifest_problem(cfg: Config) -> str | None:
     except OSError as exc:
         return f"cannot read {path}: {exc}"
     except ValueError as exc:
-        return f"{path} is not valid JSON ({exc}) — re-run `dsh-kb sync` to rebuild it"
+        return f"{path} is not valid JSON ({exc}) — re-run `scheda sync` to rebuild it"
     if not isinstance(data, dict) or not isinstance(data.get("files"), dict):
-        return f"{path} has an unexpected shape — re-run `dsh-kb sync` to rebuild it"
+        return f"{path} has an unexpected shape — re-run `scheda sync` to rebuild it"
     return None
 
 

@@ -9,9 +9,9 @@
 | 角色 | 建议 |
 |---|---|
 | 真源 | 共享盘上的一个目录（多机可见、可人工编辑） |
-| 各机镜像 + 索引 | 每台机器各自的 `~/.dsh-kb/`（**不要放到共享盘上**） |
+| 各机镜像 + 索引 | 每台机器各自的 `~/.scheda/`（**不要放到共享盘上**） |
 | 写入 | 只在共享盘上发生；agent 只写 `_incoming/` |
-| 刷新 | 每台机器定期跑 `dsh-kb refresh` |
+| 刷新 | 每台机器定期跑 `scheda refresh` |
 
 一台机器刷新失败不影响另一台：镜像和索引都是**本机独立**的派生物。
 
@@ -20,7 +20,7 @@
 ## 2. 最小可用：一条命令
 
 ```bash
-dsh-kb refresh
+scheda refresh
 ```
 
 它等价于 `sync` + `index`，返回值可用于告警（非零表示失败）。**调度器只需要这一条。**
@@ -29,25 +29,25 @@ dsh-kb refresh
 
 ## 3. systemd timer（Linux）
 
-`~/.config/systemd/user/dsh-kb-refresh.service`：
+`~/.config/systemd/user/scheda-refresh.service`：
 
 ```ini
 [Unit]
-Description=dsh-kb: refresh mirror and index
+Description=scheda: refresh mirror and index
 
 [Service]
 Type=oneshot
-Environment=DSH_KB_HOME=%h/.dsh-kb
-ExecStart=%h/.local/bin/dsh-kb refresh --quiet
+Environment=SCHEDA_HOME=%h/.scheda
+ExecStart=%h/.local/bin/scheda refresh --quiet
 # 共享盘没挂上时快速失败，不要卡住
 TimeoutStartSec=300
 ```
 
-`~/.config/systemd/user/dsh-kb-refresh.timer`：
+`~/.config/systemd/user/scheda-refresh.timer`：
 
 ```ini
 [Unit]
-Description=dsh-kb: refresh twice a day
+Description=scheda: refresh twice a day
 
 [Timer]
 OnCalendar=*-*-* 06:00:00
@@ -60,8 +60,8 @@ WantedBy=timers.target
 
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable --now dsh-kb-refresh.timer
-systemctl --user list-timers dsh-kb-refresh.timer
+systemctl --user enable --now scheda-refresh.timer
+systemctl --user list-timers scheda-refresh.timer
 ```
 
 > 注意：`OnCalendar` **一行只能写一个时刻**。写成
@@ -73,7 +73,7 @@ systemctl --user list-timers dsh-kb-refresh.timer
 
 ```cron
 # 每天 06:00 与 18:00 刷新（PATH 要写全，cron 环境很干净）
-0 6,18 * * * DSH_KB_HOME=$HOME/.dsh-kb /home/you/.local/bin/dsh-kb refresh --quiet
+0 6,18 * * * SCHEDA_HOME=$HOME/.scheda /home/you/.local/bin/scheda refresh --quiet
 ```
 
 ---
@@ -82,9 +82,9 @@ systemctl --user list-timers dsh-kb-refresh.timer
 
 ```powershell
 $action  = New-ScheduledTaskAction -Execute "python.exe" `
-           -Argument "-m dsh_kb refresh --quiet" -WorkingDirectory "F:\Projects\dsh-kb"
+           -Argument "-m scheda refresh --quiet" -WorkingDirectory "F:\Projects\scheda"
 $trigger = New-ScheduledTaskTrigger -Daily -At 09:00
-Register-ScheduledTask -TaskName "dsh-kb refresh" -Action $action -Trigger $trigger
+Register-ScheduledTask -TaskName "scheda refresh" -Action $action -Trigger $trigger
 ```
 
 如果不想配计划任务，也可以让 agent 在会话开始时自己跑一次 `refresh`
@@ -107,15 +107,15 @@ Register-ScheduledTask -TaskName "dsh-kb refresh" -Action $action -Trigger $trig
 ## 7. 自检
 
 ```bash
-dsh-kb doctor          # 人类可读
-dsh-kb doctor --json   # 可接监控
+scheda doctor          # 人类可读
+scheda doctor --json   # 可接监控
 ```
 
 它按项检查（每项一个 `ok` / `~~` / `!!`）：源能否解析与连通（挂载、SMB、WebDAV 各自探测）、
 网络盘识别、镜像是否含**本该排除的路径**、索引是否存在、home 是否可写、源是否可写
 （真的写一个 `_incoming/` 探针再删）、`config.json` 里有没有未知键、向量库与索引是否
 一致、取代关系是否自洽、索引排除清单是否生效。带向量库的部署还会向本地嵌入端点
-（默认 `http://127.0.0.1:11434`）发一次极短探测，设 `DSH_KB_RAG_OLLAMA=-` 可跳过。
+（默认 `http://127.0.0.1:11434`）发一次极短探测，设 `SCHEDA_RAG_OLLAMA=-` 可跳过。
 把 `doctor` 挂进你的巡检（例如每天 06:00），比事后追查便宜得多。
 
 ---
@@ -125,14 +125,14 @@ dsh-kb doctor --json   # 可接监控
 挂载不可用（网络盘掉线、容器里没有 mount 权限）时，可以直接用 WebDAV：
 
 ```bash
-export DSH_KB_SOURCE=webdav
-export DSH_KB_WEBDAV_ROOT=https://nas.example.com:5000/webdav/kb
-export DSH_KB_WEBDAV_USER=me
-export DSH_KB_WEBDAV_PASSWORD=...          # 或用 DSH_KB_WEBDAV_CREDENTIALS=<key=value 文件>
+export SCHEDA_SOURCE=webdav
+export SCHEDA_WEBDAV_ROOT=https://nas.example.com:5000/webdav/kb
+export SCHEDA_WEBDAV_USER=me
+export SCHEDA_WEBDAV_PASSWORD=...          # 或用 SCHEDA_WEBDAV_CREDENTIALS=<key=value 文件>
 # 需要客户端证书（mTLS）时：
-export DSH_KB_WEBDAV_CERT=/path/cert.pem DSH_KB_WEBDAV_KEY=/path/key.pem DSH_KB_WEBDAV_CA=/path/ca.pem
+export SCHEDA_WEBDAV_CERT=/path/cert.pem SCHEDA_WEBDAV_KEY=/path/key.pem SCHEDA_WEBDAV_CA=/path/ca.pem
 # 设备的证书 CN 与地址不同（很常见：连 IP、证书签的是域名）：
-export DSH_KB_WEBDAV_CONNECT=192.0.2.10
+export SCHEDA_WEBDAV_CONNECT=192.0.2.10
 ```
 
 `source=auto` 会在挂载不可用时自动退到 WebDAV，所以上面这些通常只要配一次。
@@ -159,7 +159,7 @@ export DSH_KB_WEBDAV_CONNECT=192.0.2.10
 | 选项 | 为什么 |
 |---|---|
 | `_netdev,nofail,x-systemd.automount` | 开机时 NAS 没起来也不会卡住引导；访问时才挂 |
-| `x-systemd.automount` | 产生一个 `autofs` 条目与真实挂载**同挂载点**——`dsh-kb` 会正确选择真实文件系统而不是触发器 |
+| `x-systemd.automount` | 产生一个 `autofs` 条目与真实挂载**同挂载点**——`scheda` 会正确选择真实文件系统而不是触发器 |
 | `credentials=<600 的文件>` | 不要把口令写进 fstab |
 | `uid/gid/file_mode` | 让容器/服务账号能读；**显示权限不等于服务端权限**（见 9.2） |
 
@@ -180,7 +180,7 @@ password=yourpassword
 //NAS/kb/outbox   → /mnt/nas/kb-out    （rw）
 ```
 
-`dsh-kb` 会读 `/proc/mounts` 判断当前源是不是网络挂载、是不是 `ro`，
+`scheda` 会读 `/proc/mounts` 判断当前源是不是网络挂载、是不是 `ro`，
 并在 `doctor` 里报出来；写操作会**提前失败并给出一句人话**，而不是抛 `PermissionError` 的栈。
 
 > 还有一种更隐蔽的情况：挂载选项写着 `rw`，但**服务端账号**在该目录没有写权限。
@@ -199,14 +199,14 @@ sudo mount -a           # 重新挂载（需要 root）
 ls /mnt/nas/kb          # 恢复正常
 ```
 
-`dsh-kb` 把它翻译成可执行的句子：
+`scheda` 把它翻译成可执行的句子：
 
 ```
 source reachable   the share looks stale (ESTALE): the mount lost its session.
-                   Remount it (`sudo mount -a`) or fall back with DSH_KB_SOURCE=webdav
+                   Remount it (`sudo mount -a`) or fall back with SCHEDA_SOURCE=webdav
 ```
 
-把 `dsh-kb doctor` 挂进每日巡检，就能在"检索悄悄查不到东西"之前发现问题。
+把 `scheda doctor` 挂进每日巡检，就能在"检索悄悄查不到东西"之前发现问题。
 
 ### 9.4 时间戳只有 1 秒：`--full`
 
@@ -219,7 +219,7 @@ Markdown 里这种情况不多（改一个字通常字节数也变），但确�
 `2026` → `2027`）。需要时强制全量：
 
 ```bash
-dsh-kb sync --full        # 忽略清单，全部重拉
+scheda sync --full        # 忽略清单，全部重拉
 ```
 
 容差本身可调（默认 `1.0` 秒，略小于一个刻度）：
@@ -230,7 +230,7 @@ dsh-kb sync --full        # 忽略清单，全部重拉
 
 ### 9.5 Windows：盘符或 UNC
 
-配置里三种写法都接受，`dsh-kb` 会归一化：
+配置里三种写法都接受，`scheda` 会归一化：
 
 ```json
 {
@@ -257,11 +257,11 @@ dsh-kb sync --full        # 忽略清单，全部重拉
 `/etc/fstab` 时，用这条：
 
 ```bash
-export DSH_KB_SOURCE=smb
-export DSH_KB_SMB_SHARE="//192.0.2.10/kb-1234567890"
-export DSH_KB_SMB_SUBDIR="kb"                          # 可选：共享内的子目录
-export DSH_KB_SMB_CREDENTIALS=/etc/samba/cred/kb.cred  # smbclient 的 -A 文件（600）
-dsh-kb sync
+export SCHEDA_SOURCE=smb
+export SCHEDA_SMB_SHARE="//192.0.2.10/kb-1234567890"
+export SCHEDA_SMB_SUBDIR="kb"                          # 可选：共享内的子目录
+export SCHEDA_SMB_CREDENTIALS=/etc/samba/cred/kb.cred  # smbclient 的 -A 文件（600）
+scheda sync
 ```
 
 需要系统上有 `smbclient`（Debian/Ubuntu：`apt install smbclient`）。

@@ -26,10 +26,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from dsh_kb.cli import main  # noqa: E402
-from dsh_kb.config import Config  # noqa: E402
-from dsh_kb.index import build, read, search, stats  # noqa: E402
-from dsh_kb.mirror import (  # noqa: E402
+from scheda.cli import main  # noqa: E402
+from scheda.config import Config  # noqa: E402
+from scheda.index import build, read, search, stats  # noqa: E402
+from scheda.mirror import (  # noqa: E402
     diff_entries,
     diff_mirror,
     load_manifest,
@@ -37,8 +37,8 @@ from dsh_kb.mirror import (  # noqa: E402
     save_manifest,
     sync,
 )
-from dsh_kb.service import diff_payload  # noqa: E402
-from dsh_kb.sources import Entry, FilesystemSource  # noqa: E402
+from scheda.service import diff_payload  # noqa: E402
+from scheda.sources import Entry, FilesystemSource  # noqa: E402
 
 Z0_DOC = """---
 type: lesson
@@ -116,7 +116,7 @@ class FixtureBundle:
 
 class EndToEnd(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="dsh-kb-test-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="scheda-test-"))
         self.bundle = self.tmp / "share"
         self.home = self.tmp / "home"
         FixtureBundle(self.bundle)
@@ -411,10 +411,10 @@ class DiffComparison(unittest.TestCase):
 
 
 class DiffReport(unittest.TestCase):
-    """`dsh-kb diff` —— 只读体检。源就是临时目录，全程离线。"""
+    """`scheda diff` —— 只读体检。源就是临时目录，全程离线。"""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="dsh-kb-diff-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="scheda-diff-"))
         self.bundle = self.tmp / "share"
         self.home = self.tmp / "home"
         FixtureBundle(self.bundle)
@@ -676,7 +676,7 @@ class DiffReport(unittest.TestCase):
         code, out, _ = self.run_cli("diff")
         self.assertEqual(code, 10)
         self.assertIn("建议", out)
-        self.assertIn("dsh-kb index", out)
+        self.assertIn("scheda index", out)
         self.assertIn("退出码 10", out)
 
     # ---- 4. _incoming 积压 ------------------------------------------------
@@ -747,7 +747,7 @@ class DiffReport(unittest.TestCase):
         code, out, err = self.run_cli("diff")
         self.assertEqual(code, 11)
         self.assertIn("manifest", err)
-        self.assertIn("dsh-kb sync", err, "坏掉的 manifest 要告诉人怎么重建")
+        self.assertIn("scheda sync", err, "坏掉的 manifest 要告诉人怎么重建")
 
     def test_diff_payload_is_usable_without_the_cli(self):
         """service.diff_payload 是纯读的用例层函数，MCP 侧将来能直接复用。"""
@@ -765,7 +765,7 @@ class DiffReport(unittest.TestCase):
         """
         fresh = self.tmp / "fresh-home"
         saved = {key: os.environ.pop(key) for key in list(os.environ)
-                 if key.startswith("DSH_KB_")}
+                 if key.startswith("SCHEDA_")}
         try:
             out, err = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):

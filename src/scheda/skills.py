@@ -1,8 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Skill 资产区（`z3-skills/`）的查询入口。
 
 **设计取舍：检索实现只有一份。** 这里不重新实现分词与打分，而是转发给 skill 总库
 自带的 `bin/find.py`（自研 SQLite 倒排索引：拉丁词 + 中文 bigram；索引落在库外的
-本机缓存目录，不放网络盘）。两套实现必然漂移，所以 dsh-kb 只负责定位、转发与格式化。
+本机缓存目录，不放网络盘）。两套实现必然漂移，所以 scheda 只负责定位、转发与格式化。
 
 **为什么 skill 不并进主子索引**：`z3-skills/` 在配置里是 `index: false`。资产区里
 每个 skill 一份 `SKILL.md`，几千份文档进 FTS5 会把知识条目的检索淹没（见
@@ -20,7 +21,7 @@ import subprocess
 import sys
 
 #: 显式覆盖库位置（排障、多机迁移、库放在真源之外时用）
-LIB_ENV = "DSH_KB_SKILLS_LIB"
+LIB_ENV = "SCHEDA_SKILLS_LIB"
 
 #: 资产区在 bundle 内的约定位置（真源根之下的相对路径）
 ASSET_SUBDIR = ("z3-skills", "skills-library")
@@ -46,7 +47,7 @@ def library_root(cfg=None) -> pathlib.Path:
 
     解析顺序：
 
-    1. `DSH_KB_SKILLS_LIB` —— 显式指定，优先级最高；
+    1. `SCHEDA_SKILLS_LIB` —— 显式指定，优先级最高；
     2. `<真源根>/z3-skills/skills-library` —— 资产区的约定位置，跟着配置走；
     3. `~/kb/z3-skills/skills-library` —— 单机默认布局。
     """

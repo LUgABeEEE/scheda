@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Supersede relations — "which page has replaced which".
 
 Why this module exists
@@ -312,7 +313,7 @@ def check(cfg) -> dict:
         tables = {r[0] for r in con.execute(
             "select name from sqlite_master where type='table'")}
         if not {"pages", "supersedes"} <= tables:
-            out["note"] = "index has no pages/supersedes tables — rebuild it (`dsh-kb index`)"
+            out["note"] = "index has no pages/supersedes tables — rebuild it (`scheda index`)"
             return out
         out["built"] = True
         pages = con.execute("select count(*) from pages").fetchone()[0]

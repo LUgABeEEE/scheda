@@ -1,0 +1,80 @@
+# scheda: 刷新本机镜像与 FTS5 索引（Type=oneshot，跑完即退，由 timer 触发）
+#
+# 安装位置（二选一）：
+#   系统级  /etc/systemd/system/scheda-refresh.service
+#   用户级  ~/.config/systemd/user/scheda-refresh.service
+#     —— 用户级时删掉 User= / Group= / ProtectHome=，并用 systemctl --user 操作，
+#        Environment=SCHEDA_HOME 与 ReadWritePaths= 仍然要指向真实路径。
+#
+# 【必须改】把下面每一处 <KB_HOME> 换成本机实际的状态目录，例如：
+#   /var/lib/scheda        系统级 + 专用账号 kb（推荐）
+#   /home/kb/.scheda       用户级
+# 它出现两次：Environment=SCHEDA_HOME= 与 ReadWritePaths=。两处必须一致，
+# 否则 refresh 会被 ProtectSystem=strict 挡成只读而失败。
+#
+# 目录先建好并归属服务账号（系统级）：
+#   sudo install -d -o kb -g kb -m 0700 /var/lib/scheda
+#
+# 首次验证（不要等 timer）：
+#   sudo -u kb SCHEDA_HOME=/var/lib/scheda /usr/local/bin/scheda refresh --quiet; echo $?
+#   systemctl start scheda-refresh.service && systemctl status scheda-refresh.service
+
+[Unit]
+Description=scheda: refresh mirror and FTS5 index
+Documentation=https://github.com/LUgABeEEE/scheda/blob/main/docs/deployment.md
+# 源通常是网络共享：等网络真正在线再跑，避免开机时因未挂载而失败
+After=network-online.target
+Wants=network-online.target
+# 需要「先挂上共享盘再刷新」时取消注释，并填真实挂载点（docs/deployment.md §9.1）
+# RequiresMountsFor=/mnt/nas/kb
+
+[Service]
+Type=oneshot
+# 【必须改】跑刷新的系统账号。不要用 root：镜像是用户数据，只读取源、只写 <KB_HOME>。
+# 该账号需要：<KB_HOME> 可写 + 源目录可读。
+User=kb
+Group=kb
+# 【必须改】<KB_HOME> → 本机路径，例如 /var/lib/scheda
+Environment=SCHEDA_HOME=<KB_HOME>
+# 源也可以在这里钉死，等价于命令行 --source/--mount（值见 src/scheda/config.py）：
+# Environment=SCHEDA_SOURCE=mount
+# Environment=SCHEDA_MOUNT=/mnt/nas/kb
+# WebDAV 兜底源（挂载不可用时）：
+# Environment=SCHEDA_SOURCE=webdav
+# Environment=SCHEDA_WEBDAV_ROOT=https://nas.example.com:5000/webdav/kb
+
+# --quiet 只压掉进度输出，失败信息仍走 stderr 并进 journal；非零退出码 = 刷新失败
+# 路径按实际安装位置改（`command -v scheda` 的结果）：pipx/venv 装法通常不是
+# /usr/local/bin，例如 %h/.local/bin/scheda（用户级）或 /opt/scheda/.venv/bin/scheda。
+ExecStart=/usr/local/bin/scheda refresh --quiet
+# 共享盘掉线时快速失败，不要挂住 timer 队列
+TimeoutStartSec=300
+
+# 后台整理工作：让出 CPU 与 IO 给交互任务
+Nice=10
+IOSchedulingClass=idle
+IOSchedulingPriority=7
+
+# ---- 加固 ----------------------------------------------------------------
+# 整个文件系统只读，仅 <KB_HOME> 可写（refresh 只写 mirror/ index/ state/ logs/）
+ProtectSystem=strict
+# 【必须改】与上面的 SCHEDA_HOME 保持一致
+ReadWritePaths=<KB_HOME>
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+# 源是 WebDAV 时需要 AF_INET/AF_INET6；本地挂载只需要 AF_UNIX
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# 状态目录里有私密页面：默认 umask 收紧
+UMask=0077
+# 若 <KB_HOME> 位于 /home 之下，删掉这一行（或改为 ProtectHome=read-only），
+# 否则该目录对服务不可见。
+ProtectHome=true

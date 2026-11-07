@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Two-minute tour of dsh-kb: no share, no config file, nothing installed.
+# Two-minute tour of scheda: no share, no config file, nothing installed.
 #
 #   bash examples/demo.sh
 #
@@ -10,7 +10,7 @@
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/dsh-kb-demo-XXXXXX")
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/scheda-demo-XXXXXX")
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
 BUNDLE="$TMP/bundle"
@@ -27,7 +27,7 @@ Cause: the autofs trigger hides the real filesystem, so the sync reads the
 empty trigger directory and mirrors zero files.
 
 Fix: resolve the real mount (or pass `--mount <real-path>`), then run
-`dsh-kb refresh`.
+`scheda refresh`.
 PAGE
 
 cat > "$BUNDLE/z0-public/retrieval.md" <<'PAGE'
@@ -62,20 +62,20 @@ if ! python3 -c 'import handrolled' >/dev/null 2>&1; then
 fi
 
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
-export DSH_KB_HOME="$KB_HOME"
-export DSH_KB_SOURCE="local"
-export DSH_KB_LOCAL_ROOT="$BUNDLE"
+export SCHEDA_HOME="$KB_HOME"
+export SCHEDA_SOURCE="local"
+export SCHEDA_LOCAL_ROOT="$BUNDLE"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-say "1/4  dsh-kb --version"
-python3 -m dsh_kb --version
+say "1/4  scheda --version"
+python3 -m scheda --version
 
 say "2/4  refresh: mirror the bundle, then index it"
-python3 -m dsh_kb refresh
+python3 -m scheda refresh
 
 say "3/4  search \"mount going stale\"  (path + line + snippet, that is the whole result)"
-python3 -m dsh_kb search "mount going stale"
+python3 -m scheda search "mount going stale"
 
 say "4/4  the sensitive zone was never copied, and a default search cannot see it"
 if [ -e "$KB_HOME/mirror/z2-sensitive" ]; then
@@ -85,5 +85,5 @@ fi
 echo "z2-sensitive: not on disk  ✓"
 
 echo
-echo "That is the whole loop. Next: point DSH_KB_LOCAL_ROOT (or mount/webdav) at"
+echo "That is the whole loop. Next: point SCHEDA_LOCAL_ROOT (or mount/webdav) at"
 echo "your real bundle, copy examples/config.json next to it, and read README.md."

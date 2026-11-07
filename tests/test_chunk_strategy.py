@@ -38,8 +38,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from dsh_kb import index  # noqa: E402
-from dsh_kb.config import Config, load_config  # noqa: E402
+from scheda import index  # noqa: E402
+from scheda.config import Config, load_config  # noqa: E402
 
 #: Markdown page that exercises every structural rule at once: YAML
 #: frontmatter, three heading levels that *do* split, a level-4 heading that does
@@ -361,9 +361,9 @@ class ConfigTest(unittest.TestCase):
 
     def test_environment_overrides(self):
         env = {
-            "DSH_KB_CHUNK_STRATEGY": "structural",
-            "DSH_KB_CHUNK_MAX_CHARS": "640",
-            "DSH_KB_CHUNK_LINES": "9",
+            "SCHEDA_CHUNK_STRATEGY": "structural",
+            "SCHEDA_CHUNK_MAX_CHARS": "640",
+            "SCHEDA_CHUNK_LINES": "9",
         }
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, env):
             cfg = load_config(home=tmp)
@@ -437,9 +437,9 @@ class ImageArmConfigTest(unittest.TestCase):
         self.assertEqual(cfg.rag.image_db, "")
 
     def test_environment_form_still_works(self):
-        env = {"DSH_KB_RAG_IMAGE_ARM_ENABLED": "1",
-               "DSH_KB_RAG_IMAGE_ARM_WEIGHT": "0.8",
-               "DSH_KB_RAG_IMAGE_ARM_DB": "/tmp/vectors-image.sqlite"}
+        env = {"SCHEDA_RAG_IMAGE_ARM_ENABLED": "1",
+               "SCHEDA_RAG_IMAGE_ARM_WEIGHT": "0.8",
+               "SCHEDA_RAG_IMAGE_ARM_DB": "/tmp/vectors-image.sqlite"}
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, env):
             cfg = load_config(home=tmp)
         self.assertTrue(cfg.rag.image_arm_enabled)
@@ -448,7 +448,7 @@ class ImageArmConfigTest(unittest.TestCase):
 
     def test_bad_values_fall_back_instead_of_raising(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-                os.environ, {"DSH_KB_RAG_IMAGE_ARM_WEIGHT": "heavy"}):
+                os.environ, {"SCHEDA_RAG_IMAGE_ARM_WEIGHT": "heavy"}):
             cfg = load_config(home=tmp)
         self.assertEqual(cfg.rag.image_arm_weight, 0.6)
         with tempfile.TemporaryDirectory() as tmp:      # non-string path in the file

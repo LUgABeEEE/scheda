@@ -12,14 +12,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from dsh_kb.config import Config, Zone, load_config, source_available  # noqa: E402
+from scheda.config import Config, Zone, load_config, source_available  # noqa: E402
 
 
 class TestIndexNever(unittest.TestCase):
     """``index_never``：只挡索引、不挡镜像 —— 与 ``never`` 的差别就是它的全部意义。"""
 
     def setUp(self):
-        self.cfg = Config(home=Path("/tmp/dsh-kb-index-never"),
+        self.cfg = Config(home=Path("/tmp/scheda-index-never"),
                           index_never=("/backup/", "/out/", "_待入库/"))
 
     def test_substring_and_case_and_backslash(self):
@@ -57,7 +57,7 @@ class TestIndexNever(unittest.TestCase):
 
 class TestZonePolicy(unittest.TestCase):
     def setUp(self):
-        self.cfg = Config(home=Path("/tmp/dsh-kb-test"))
+        self.cfg = Config(home=Path("/tmp/scheda-test"))
 
     def test_default_zones(self):
         names = [z.name for z in self.cfg.zones]
@@ -118,15 +118,15 @@ class TestSourceResolution(unittest.TestCase):
     def test_env_override_wins(self):
         import os
 
-        old = os.environ.get("DSH_KB_HOME")
-        os.environ["DSH_KB_HOME"] = "/tmp/dsh-kb-env-home"
+        old = os.environ.get("SCHEDA_HOME")
+        os.environ["SCHEDA_HOME"] = "/tmp/scheda-env-home"
         try:
-            self.assertEqual(str(load_config().home), "/tmp/dsh-kb-env-home")
+            self.assertEqual(str(load_config().home), "/tmp/scheda-env-home")
         finally:
             if old is None:
-                os.environ.pop("DSH_KB_HOME", None)
+                os.environ.pop("SCHEDA_HOME", None)
             else:
-                os.environ["DSH_KB_HOME"] = old
+                os.environ["SCHEDA_HOME"] = old
 
 
 class TestConfigFileFollowsHome(unittest.TestCase):
@@ -142,12 +142,12 @@ class TestConfigFileFollowsHome(unittest.TestCase):
     def _load_without_env(self, **overrides):
         import os
 
-        old = os.environ.pop("DSH_KB_HOME", None)
+        old = os.environ.pop("SCHEDA_HOME", None)
         try:
             return load_config(**overrides)
         finally:
             if old is not None:
-                os.environ["DSH_KB_HOME"] = old
+                os.environ["SCHEDA_HOME"] = old
 
     def test_home_override_relocates_the_config_file(self):
         import json

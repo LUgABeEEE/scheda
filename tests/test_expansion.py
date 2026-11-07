@@ -13,7 +13,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from dsh_kb import expansion  # noqa: E402
+from scheda import expansion  # noqa: E402
 
 
 class Cfg:
@@ -37,10 +37,10 @@ class Base(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self.cfg = Cfg(self.tmp)
-        self._env = {k: v for k, v in os.environ.items() if k.startswith("DSH_KB_")}
+        self._env = {k: v for k, v in os.environ.items() if k.startswith("SCHEDA_")}
 
     def tearDown(self):
-        for key in [k for k in os.environ if k.startswith("DSH_KB_")]:
+        for key in [k for k in os.environ if k.startswith("SCHEDA_")]:
             os.environ.pop(key, None)
         os.environ.update(self._env)
         self._tmp.cleanup()
@@ -48,15 +48,15 @@ class Base(unittest.TestCase):
 
 class TestPaths(Base):
     def test_state_defaults_to_home_not_to_a_machine_path(self):
-        os.environ.pop("DSH_KB_REWRITE_CACHE_DB", None)
+        os.environ.pop("SCHEDA_REWRITE_CACHE_DB", None)
         self.assertEqual(expansion.cache_db(self.cfg),
                          self.tmp / "state" / "rewrite-cache.sqlite")
-        os.environ.pop("DSH_KB_DICT_PATH", None)
+        os.environ.pop("SCHEDA_DICT_PATH", None)
         self.assertEqual(expansion.dict_path(self.cfg), self.tmp / "dict" / "synonyms.json")
 
     def test_both_can_be_pointed_elsewhere(self):
-        os.environ["DSH_KB_REWRITE_CACHE_DB"] = "/tmp/elsewhere.sqlite"
-        os.environ["DSH_KB_DICT_PATH"] = "/tmp/syn.json"
+        os.environ["SCHEDA_REWRITE_CACHE_DB"] = "/tmp/elsewhere.sqlite"
+        os.environ["SCHEDA_DICT_PATH"] = "/tmp/syn.json"
         self.assertEqual(expansion.cache_db(self.cfg), Path("/tmp/elsewhere.sqlite"))
         self.assertEqual(expansion.dict_path(self.cfg), Path("/tmp/syn.json"))
 
@@ -114,7 +114,7 @@ class TestIdentifierGuard(Base):
             self.assertTrue(expansion.looks_like_identifier(query), query)
 
     def test_prose_is_not_an_identifier(self):
-        for query in ("怎么配机场", "mount stale", "dsh-kb 是什么", ""):
+        for query in ("怎么配机场", "mount stale", "scheda 是什么", ""):
             self.assertFalse(expansion.looks_like_identifier(query), query)
 
     def test_an_identifier_with_zero_hits_is_not_rewritten(self):

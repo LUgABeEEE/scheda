@@ -1,13 +1,22 @@
 # The source distribution should be enough to read the project and run its
-# suite: the docs are part of the deliverable, and the tests are deliberately
-# dependency-free so a reader can verify the claims without installing anything.
+# suite: the docs are part of the deliverable, and the tests need exactly the
+# same single dependency the package itself declares (`handrolled`, pure stdlib),
+# so a reader who installs the wheel — or runs `pip install handrolled` in a
+# checkout — can verify every claim locally.  There is no test-only dependency.
 include README.md
 include README.zh.md
 include CHANGELOG.md
 include CONTRIBUTING.md
 include SECURITY.md
+include COMMERCIAL.md
 include LICENSE
 include examples/config.json
 include examples/demo.sh
 recursive-include docs *.md
 recursive-include tests *.py
+recursive-include deploy *
+recursive-include integrations *
+recursive-include shim *
+include Dockerfile
+include docker-compose.yml
+include .dockerignore

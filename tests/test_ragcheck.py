@@ -1,4 +1,4 @@
-"""Tests for the vector store ↔ index consistency checker (``dsh_kb.ragcheck``).
+"""Tests for the vector store ↔ index consistency checker (``scheda.ragcheck``).
 
 What matters operationally, and is therefore asserted here:
 
@@ -28,8 +28,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from dsh_kb import ragcheck  # noqa: E402
-from dsh_kb.config import (  # noqa: E402
+from scheda import ragcheck  # noqa: E402
+from scheda.config import (  # noqa: E402
     DEFAULT_RAG_DIM,
     DEFAULT_RAG_MODEL,
     DEFAULT_RAG_VECTORS_DB,
@@ -135,12 +135,12 @@ class RagFixture(unittest.TestCase):
         con.close()
 
     def _load(self, vectors_db: str | None = None, **env: str) -> Config:
-        """load_config with a clean ``DSH_KB_*`` slate so ambient env cannot leak in."""
+        """load_config with a clean ``SCHEDA_*`` slate so ambient env cannot leak in."""
         with mock.patch.dict(os.environ):
-            for key in [k for k in os.environ if k.startswith("DSH_KB_")]:
+            for key in [k for k in os.environ if k.startswith("SCHEDA_")]:
                 os.environ.pop(key, None)
             if vectors_db is not None:
-                os.environ["DSH_KB_RAG_VECTORS_DB"] = vectors_db
+                os.environ["SCHEDA_RAG_VECTORS_DB"] = vectors_db
             os.environ.update(env)
             return load_config(home=self.home)
 
@@ -508,7 +508,7 @@ class TestPrune(RagFixture):
     def test_prune_refuses_a_foreign_vector_store_the_2026_10_19_incident(self):
         """复现 2026-10-19 00:39 的事故组合。
 
-        当时：``DSH_KB_HOME=<sandbox>/home`` 而 **漏设** ``DSH_KB_RAG_VECTORS_DB``
+        当时：``SCHEDA_HOME=<sandbox>/home`` 而 **漏设** ``SCHEDA_RAG_VECTORS_DB``
         ⇒ 向量库落到默认的生产路径。prune 拿 sandbox 那份只有 1 页的索引当对照面，
         判定生产库 5,521 行全是孤儿并全部删除（removed=5521, kept=0）。
 
@@ -517,7 +517,7 @@ class TestPrune(RagFixture):
         （5,520/5,521 > 50%）；③放行 + --force 才允许，且只删孤儿。
         """
         self._write_index([(1, "z0-public/only.md", 1, "only page")])
-        external_dir = tempfile.TemporaryDirectory(prefix="dsh-kb-external-")
+        external_dir = tempfile.TemporaryDirectory(prefix="scheda-external-")
         self.addCleanup(external_dir.cleanup)
         external = Path(external_dir.name) / "vectors.sqlite"
         rows = [(1, "z0-public/only.md", 1, "only", "h1", DEFAULT_RAG_MODEL, _blob())]
@@ -541,7 +541,7 @@ class TestPrune(RagFixture):
         self.assertEqual(_snapshot(external), before, "外部库 sha256/大小/mtime 必须完全未变")
 
         # ② 显式放行外部库、但没有 --force → 仍拒绝（99.98% > 50%）
-        with mock.patch.dict(os.environ, {"DSH_KB_RAG_ALLOW_EXTERNAL_VECTORS_DB": "1"}):
+        with mock.patch.dict(os.environ, {"SCHEDA_RAG_ALLOW_EXTERNAL_VECTORS_DB": "1"}):
             result = ragcheck.prune(cfg, dry_run=False)
         self.assertTrue(result["refused"])
         self.assertEqual(result["reason"], ragcheck.REFUSED_BULK)
@@ -551,7 +551,7 @@ class TestPrune(RagFixture):
         self.assertEqual(_snapshot(external), before)
 
         # ③ 放行 + --force → 才真的删，而且只删孤儿（非孤儿那一行留着）
-        with mock.patch.dict(os.environ, {"DSH_KB_RAG_ALLOW_EXTERNAL_VECTORS_DB": "1"}):
+        with mock.patch.dict(os.environ, {"SCHEDA_RAG_ALLOW_EXTERNAL_VECTORS_DB": "1"}):
             result = ragcheck.prune(cfg, dry_run=False, force=True)
         self.assertFalse(result["refused"])
         self.assertTrue(result["ok"])
@@ -587,7 +587,7 @@ class TestPrune(RagFixture):
 
     def test_allow_external_can_come_from_the_config_file(self):
         """放行开关也接受 config.json 的两种写法（嵌套 / 扁平）。"""
-        external_dir = tempfile.TemporaryDirectory(prefix="dsh-kb-external-")
+        external_dir = tempfile.TemporaryDirectory(prefix="scheda-external-")
         self.addCleanup(external_dir.cleanup)
         external = Path(external_dir.name) / "vectors.sqlite"
         self._write_vectors_at(external, [
@@ -1021,7 +1021,7 @@ class TestRagConfig(unittest.TestCase):
 
     def _load(self, **env: str) -> Config:
         with mock.patch.dict(os.environ):
-            for key in [k for k in os.environ if k.startswith("DSH_KB_")]:
+            for key in [k for k in os.environ if k.startswith("SCHEDA_")]:
                 os.environ.pop(key, None)
             os.environ.update(env)
             return load_config(home=self.home)
@@ -1037,9 +1037,9 @@ class TestRagConfig(unittest.TestCase):
 
     def test_environment_overrides_the_defaults(self):
         cfg = self._load(
-            DSH_KB_RAG_VECTORS_DB="/tmp/elsewhere.sqlite",
-            DSH_KB_RAG_MODEL="e5-mistral",
-            DSH_KB_RAG_DIM="384",
+            SCHEDA_RAG_VECTORS_DB="/tmp/elsewhere.sqlite",
+            SCHEDA_RAG_MODEL="e5-mistral",
+            SCHEDA_RAG_DIM="384",
         )
         self.assertEqual(cfg.rag.vectors_db, "/tmp/elsewhere.sqlite")
         self.assertEqual(cfg.rag.model, "e5-mistral")
@@ -1048,11 +1048,11 @@ class TestRagConfig(unittest.TestCase):
     def test_every_rag_key_can_be_set_from_the_environment(self):
         """早期只有 5 个子键认环境变量，rerank_*/deep_* 只能写文件 —— 这是个陷阱。"""
         cfg = self._load(
-            DSH_KB_RAG_RERANK_ENABLED="1",
-            DSH_KB_RAG_RERANK_MAX_SHIFT="2",
-            DSH_KB_RAG_DEEP_ENABLED="0",
-            DSH_KB_RAG_DEEP_CANDIDATES="24",
-            DSH_KB_RAG_VECTOR_WEAK_RATIO="0.5",
+            SCHEDA_RAG_RERANK_ENABLED="1",
+            SCHEDA_RAG_RERANK_MAX_SHIFT="2",
+            SCHEDA_RAG_DEEP_ENABLED="0",
+            SCHEDA_RAG_DEEP_CANDIDATES="24",
+            SCHEDA_RAG_VECTOR_WEAK_RATIO="0.5",
         )
         self.assertTrue(cfg.rag.rerank_enabled)
         self.assertEqual(cfg.rag.rerank_max_shift, 2)
@@ -1080,7 +1080,7 @@ class TestRagConfig(unittest.TestCase):
 
     def test_environment_beats_the_config_file(self):
         (self.home / "config.json").write_text('{"rag": {"model": "from-file"}}', encoding="utf-8")
-        cfg = self._load(DSH_KB_RAG_MODEL="from-env")
+        cfg = self._load(SCHEDA_RAG_MODEL="from-env")
         self.assertEqual(cfg.rag.model, "from-env")
 
     def test_existing_config_keys_keep_working(self):
@@ -1123,32 +1123,32 @@ class TestRagConfig(unittest.TestCase):
             '{"rag_allow_external_vectors_db": "no"}', encoding="utf-8")
         self.assertIs(self._load().rag.allow_external_vectors_db, False)
         self.assertIs(self._load(
-            DSH_KB_RAG_ALLOW_EXTERNAL_VECTORS_DB="yes").rag.allow_external_vectors_db, True)
+            SCHEDA_RAG_ALLOW_EXTERNAL_VECTORS_DB="yes").rag.allow_external_vectors_db, True)
         self.assertTrue(ragcheck._allow_external_vectors_db(
-            self._load(DSH_KB_RAG_ALLOW_EXTERNAL_VECTORS_DB="1")))
+            self._load(SCHEDA_RAG_ALLOW_EXTERNAL_VECTORS_DB="1")))
         # 环境变量优先于配置文件（与其它 rag 键的优先级一致）
         (self.home / "config.json").write_text(
             '{"rag": {"allow_external_vectors_db": false}}', encoding="utf-8")
         self.assertTrue(ragcheck._allow_external_vectors_db(
-            self._load(DSH_KB_RAG_ALLOW_EXTERNAL_VECTORS_DB="1")))
+            self._load(SCHEDA_RAG_ALLOW_EXTERNAL_VECTORS_DB="1")))
 
     def test_enabled_defaults_to_file_presence(self):
-        cfg = self._load(DSH_KB_RAG_VECTORS_DB=str(self.home / "nope.sqlite"))
+        cfg = self._load(SCHEDA_RAG_VECTORS_DB=str(self.home / "nope.sqlite"))
         self.assertIsNone(cfg.rag.enabled)
         self.assertFalse(ragcheck.enabled(cfg))
         present = self.home / "yes.sqlite"
         present.write_bytes(b"")
-        cfg = self._load(DSH_KB_RAG_VECTORS_DB=str(present))
+        cfg = self._load(SCHEDA_RAG_VECTORS_DB=str(present))
         self.assertTrue(ragcheck.enabled(cfg))
 
     def test_enabled_can_be_forced(self):
         cfg = self._load(
-            DSH_KB_RAG_VECTORS_DB=str(self.home / "nope.sqlite"),
-            DSH_KB_RAG_ENABLED="1",
+            SCHEDA_RAG_VECTORS_DB=str(self.home / "nope.sqlite"),
+            SCHEDA_RAG_ENABLED="1",
         )
         self.assertIs(cfg.rag.enabled, True)
         self.assertTrue(ragcheck.enabled(cfg))
-        cfg = self._load(DSH_KB_RAG_ENABLED="off")
+        cfg = self._load(SCHEDA_RAG_ENABLED="off")
         self.assertIs(cfg.rag.enabled, False)
         self.assertFalse(ragcheck.enabled(cfg))
 
@@ -1158,7 +1158,7 @@ class TestVectorsDbPath(RagFixture):
         self.assertEqual(ragcheck.vectors_db(self.cfg), self.vdb)
 
     def test_tilde_is_expanded(self):
-        cfg = self._load(DSH_KB_RAG_VECTORS_DB="~/rag.sqlite")
+        cfg = self._load(SCHEDA_RAG_VECTORS_DB="~/rag.sqlite")
         self.assertEqual(ragcheck.vectors_db(cfg), Path.home() / "rag.sqlite")
 
 

@@ -33,13 +33,18 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from dsh_kb import image_embed, ragvec  # noqa: E402
-from dsh_kb.config import Config, RagConfig  # noqa: E402
-from dsh_kb.index import Hit, build as index_build, search as index_search  # noqa: E402
+from scheda import image_embed, ragvec  # noqa: E402
+from scheda.config import Config, RagConfig  # noqa: E402
+from scheda.index import Hit, build as index_build, search as index_search  # noqa: E402
 
-#: 本机把 numpy 借给可选路的位置（仅当直接 import 不到时用）。测试本身不依赖
-#: 这个路径：没有 numpy 也能跑除 ``TestImageArmIntegration`` 以外的全部用例。
-_NUMPY_FALLBACKS = ("/data/agent/tools/kb-rerank/lib",)
+#: 把 numpy 借给可选路的额外搜索位置（仅当直接 import 不到时用）。测试本身不依赖
+#: 它：没有 numpy 也能跑除 ``TestImageArmIntegration`` 以外的全部用例。
+#:
+#: 仓库里**不留任何机器路径**（CI 的 hygiene job 会拒绝维护者本机的绝对路径）：
+#: 需要额外位置时用 ``SCHEDA_TEST_NUMPY_PATH`` 以冒号分隔提供，缺省即空。
+_NUMPY_FALLBACKS = tuple(
+    part for part in os.environ.get("SCHEDA_TEST_NUMPY_PATH", "").split(os.pathsep) if part
+)
 
 
 def _probe_numpy() -> bool:
@@ -54,17 +59,17 @@ def _borrow_numpy() -> bool:
     """有 numpy 就用；没有就借本机已知的一份（仅此进程，测试后清掉）。
 
     刻意**不在 import 时**改环境：``tests/test_ragvec.py`` 也靠
-    ``DSH_KB_NUMPY_PATH`` 决定 skip/fail，模块间不该互相影响。
+    ``SCHEDA_NUMPY_PATH`` 决定 skip/fail，模块间不该互相影响。
     """
     if _probe_numpy():
         return True
     for candidate in _NUMPY_FALLBACKS:
-        if os.environ.get("DSH_KB_NUMPY_PATH") or not Path(candidate).is_dir():
+        if os.environ.get("SCHEDA_NUMPY_PATH") or not Path(candidate).is_dir():
             continue
-        os.environ["DSH_KB_NUMPY_PATH"] = candidate
+        os.environ["SCHEDA_NUMPY_PATH"] = candidate
         if _probe_numpy():
             return True
-        os.environ.pop("DSH_KB_NUMPY_PATH", None)
+        os.environ.pop("SCHEDA_NUMPY_PATH", None)
     return False
 
 SENTINEL_KEY = "sentinel-payg-key-do-not-log-0123456789"
@@ -300,16 +305,16 @@ class TestImageFusion(unittest.TestCase):
     def test_env_overrides_config(self):
         cfg = make_cfg(self.tmp)                       # 配置文件里没有图片字段
         with mock.patch.dict(os.environ, {
-            "DSH_KB_RAG_IMAGE_ARM_ENABLED": "1",
-            "DSH_KB_RAG_IMAGE_ARM_WEIGHT": "2.5",
-            "DSH_KB_RAG_IMAGE_DB": str(self.tmp / "env.sqlite"),
+            "SCHEDA_RAG_IMAGE_ARM_ENABLED": "1",
+            "SCHEDA_RAG_IMAGE_ARM_WEIGHT": "2.5",
+            "SCHEDA_RAG_IMAGE_DB": str(self.tmp / "env.sqlite"),
         }):
             enabled, weight, db = ragvec._image_settings(cfg)
         self.assertTrue(enabled)
         self.assertEqual(weight, 2.5)
         self.assertEqual(db, self.tmp / "env.sqlite")
         # 环境变量显式 0 也能把配置文件里的 true 关掉（与其余 rag 项同优先级）。
-        with mock.patch.dict(os.environ, {"DSH_KB_RAG_IMAGE_ARM_ENABLED": "0"}):
+        with mock.patch.dict(os.environ, {"SCHEDA_RAG_IMAGE_ARM_ENABLED": "0"}):
             self.assertFalse(ragvec._image_settings(make_cfg(self.tmp, image_enabled=True))[0])
 
     # -- ③ fill 模式 -------------------------------------------------------
@@ -382,7 +387,7 @@ class TestImageArmIntegration(unittest.TestCase):
             # 前缀完全不命中时不该再花钱/花时间去嵌入查询（欠费时更不该重试）
             self.assertEqual(embed_calls, [])
             with mock.patch.dict(os.environ,
-                                 {"DSH_KB_RAG_IMAGE_ARM_PREFIXES": "z3-skills/"}):
+                                 {"SCHEDA_RAG_IMAGE_ARM_PREFIXES": "z3-skills/"}):
                 merged2, note2 = ragvec.augment(cfg, "配色", 5, [], 40, mode="rrf")
         finally:
             ragvec.VectorArm.query = orig_vec
@@ -408,7 +413,7 @@ class TestImageArmIntegration(unittest.TestCase):
         ragvec.VectorArm.query = lambda *args, **kwargs: []
         image_embed._clear_key_cache()
         try:
-            with mock.patch.dict(os.environ, {"DSH_KB_IMAGE_CREDENTIALS": str(creds)}), \
+            with mock.patch.dict(os.environ, {"SCHEDA_IMAGE_CREDENTIALS": str(creds)}), \
                  mock.patch.object(image_embed.urllib.request, "urlopen", side_effect=_overdue), \
                  mock.patch("time.sleep", return_value=None):
                 image_embed._clear_key_cache()
@@ -431,7 +436,7 @@ class TestImageArmIntegration(unittest.TestCase):
         ragvec.VectorArm.query = lambda self, text, prefixes, depth=32, hyde_text=None: []
         image_embed._clear_key_cache()
         try:
-            with mock.patch.dict(os.environ, {"DSH_KB_IMAGE_CREDENTIALS": str(creds)}):
+            with mock.patch.dict(os.environ, {"SCHEDA_IMAGE_CREDENTIALS": str(creds)}):
                 image_embed._clear_key_cache()
                 merged, note = ragvec.augment(cfg, "架构图", 5, [], 40, mode="rrf")
         finally:
@@ -463,15 +468,15 @@ class TestDiscoverAndCredentials(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.creds = self.tmp / "creds.yaml"
-        self._orig_creds_env = os.environ.get("DSH_KB_IMAGE_CREDENTIALS")
-        os.environ["DSH_KB_IMAGE_CREDENTIALS"] = str(self.creds)
+        self._orig_creds_env = os.environ.get("SCHEDA_IMAGE_CREDENTIALS")
+        os.environ["SCHEDA_IMAGE_CREDENTIALS"] = str(self.creds)
         image_embed._clear_key_cache()
 
     def tearDown(self):
         if self._orig_creds_env is None:
-            os.environ.pop("DSH_KB_IMAGE_CREDENTIALS", None)
+            os.environ.pop("SCHEDA_IMAGE_CREDENTIALS", None)
         else:
-            os.environ["DSH_KB_IMAGE_CREDENTIALS"] = self._orig_creds_env
+            os.environ["SCHEDA_IMAGE_CREDENTIALS"] = self._orig_creds_env
         image_embed._clear_key_cache()
 
     def test_discover_skips_tiny_and_non_images(self):
@@ -557,8 +562,8 @@ class TestBuild(unittest.TestCase):
         self.db = self.tmp / "index" / "vectors-image.sqlite"
         self.creds = self.tmp / "creds.yaml"
         write_credentials(self.creds, {image_embed.CREDENTIAL_REF: SENTINEL_KEY})
-        self._orig_creds_env = os.environ.get("DSH_KB_IMAGE_CREDENTIALS")
-        os.environ["DSH_KB_IMAGE_CREDENTIALS"] = str(self.creds)
+        self._orig_creds_env = os.environ.get("SCHEDA_IMAGE_CREDENTIALS")
+        os.environ["SCHEDA_IMAGE_CREDENTIALS"] = str(self.creds)
         image_embed._clear_key_cache()
         self.api = _FakeAPI(dim=4)
         self._real_post = image_embed._post          # 403 用例要绕开假 _post
@@ -568,9 +573,9 @@ class TestBuild(unittest.TestCase):
     def tearDown(self):
         self._post_patch.stop()
         if self._orig_creds_env is None:
-            os.environ.pop("DSH_KB_IMAGE_CREDENTIALS", None)
+            os.environ.pop("SCHEDA_IMAGE_CREDENTIALS", None)
         else:
-            os.environ["DSH_KB_IMAGE_CREDENTIALS"] = self._orig_creds_env
+            os.environ["SCHEDA_IMAGE_CREDENTIALS"] = self._orig_creds_env
         image_embed._clear_key_cache()
 
     def _rows(self):
@@ -780,7 +785,7 @@ class TestImagePrefixes(unittest.TestCase):
     def test_env_opt_in_normalises_trailing_slash(self):
         cfg = make_cfg(self.tmp)
         with mock.patch.dict(os.environ,
-                             {"DSH_KB_RAG_IMAGE_ARM_PREFIXES": "z3-skills, z0-public"}):
+                             {"SCHEDA_RAG_IMAGE_ARM_PREFIXES": "z3-skills, z0-public"}):
             self.assertEqual(ragvec._image_prefixes(cfg, ("z0-public/",)),
                              ("z3-skills/", "z0-public/"))
 
@@ -790,7 +795,7 @@ class TestImagePrefixes(unittest.TestCase):
 
     def test_empty_value_falls_back_to_zone(self):
         cfg = make_cfg(self.tmp)
-        with mock.patch.dict(os.environ, {"DSH_KB_RAG_IMAGE_ARM_PREFIXES": ""}):
+        with mock.patch.dict(os.environ, {"SCHEDA_RAG_IMAGE_ARM_PREFIXES": ""}):
             self.assertEqual(ragvec._image_prefixes(cfg, ("z0-public/",)), ("z0-public/",))
 
 
@@ -933,19 +938,19 @@ class TestKeyNameIsTheHostsChoice(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.creds = self.tmp / "creds.yaml"
-        self._env = {k: v for k, v in os.environ.items() if k.startswith("DSH_KB_IMAGE")}
-        for k in [k for k in os.environ if k.startswith("DSH_KB_IMAGE")]:
+        self._env = {k: v for k, v in os.environ.items() if k.startswith("SCHEDA_IMAGE")}
+        for k in [k for k in os.environ if k.startswith("SCHEDA_IMAGE")]:
             os.environ.pop(k)
         self.addCleanup(self._restore)
 
     def _restore(self):
-        for k in [k for k in os.environ if k.startswith("DSH_KB_IMAGE")]:
+        for k in [k for k in os.environ if k.startswith("SCHEDA_IMAGE")]:
             os.environ.pop(k)
         os.environ.update(self._env)
 
     def test_a_renamed_key_is_honoured(self):
-        os.environ["DSH_KB_IMAGE_CREDENTIALS"] = str(self.creds)
-        os.environ["DSH_KB_IMAGE_KEY_NAME"] = "MY_MULTIMODAL_KEY"
+        os.environ["SCHEDA_IMAGE_CREDENTIALS"] = str(self.creds)
+        os.environ["SCHEDA_IMAGE_KEY_NAME"] = "MY_MULTIMODAL_KEY"
         write_credentials(self.creds, {"MY_MULTIMODAL_KEY": SENTINEL_KEY,
                                        "IMAGE_EMBED_API_KEY": "wrong-one"})
         import importlib
@@ -957,7 +962,7 @@ class TestKeyNameIsTheHostsChoice(unittest.TestCase):
             importlib.reload(image_embed)
 
     def test_no_default_credentials_path(self):
-        """没有 DSH_KB_IMAGE_CREDENTIALS 时不能悄悄用某个内置路径。"""
+        """没有 SCHEDA_IMAGE_CREDENTIALS 时不能悄悄用某个内置路径。"""
         self.assertEqual(image_embed.DEFAULT_CREDENTIALS, "",
                          "库里不该有部署路径默认值")
         self.assertIsNone(image_embed.credentials_path())

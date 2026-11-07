@@ -1,0 +1,34 @@
+# scheda: 每 15 分钟触发一次 scheda-refresh.service
+#
+# 安装（系统级）：
+#   sudo cp scheda-refresh.service scheda-refresh.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now scheda-refresh.timer
+#   systemctl list-timers scheda-refresh.timer
+#
+# 【必须改】本文件不含路径，不需要改；要改的是 scheda-refresh.service 里的
+# <KB_HOME>（例如 /var/lib/scheda）与 User=，两处都换成本机实际值。
+# 只启用 timer 即可：service 是 oneshot，由 timer 拉起，不单独 enable。
+#
+# 注意：OnCalendar 一行只能写一个时刻。写成 *:0/15,0/30 之类是无效语法
+# （docs/deployment.md §3 踩过的坑），多个时刻要分行写。
+
+[Unit]
+Description=scheda: refresh mirror and FTS5 index every 15 minutes
+
+[Timer]
+# 每小时的 0/15/30/45 分。想改成一天两次就换成分行写法：
+#   OnCalendar=*-*-* 06:00:00
+#   OnCalendar=*-*-* 18:00:00
+OnCalendar=*:0/15
+# 关机/休眠期间错过的刷新，开机后补跑一次（Persistent 对重复规则同样有效）
+Persistent=true
+# 多台机器同时打 NAS 没必要，错开 30 秒
+RandomizedDelaySec=30
+# 允许 1 分钟误差，减少无谓唤醒
+AccuracySec=1m
+# 显式绑定，避免改了文件名就静默不跑
+Unit=scheda-refresh.service
+
+[Install]
+WantedBy=timers.target

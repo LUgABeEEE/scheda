@@ -3,10 +3,10 @@
 The semantic arm is the one part of this project that can pull in heavy
 third-party code, models and network egress.  Everything about it is gated by configuration,
 and this file is the counterweight to "it exists": a clone that has never heard
-of ``DSH_KB_RERANK_ROOT`` or ``DSH_KB_DEEP_ENDPOINT`` has to behave exactly like
+of ``SCHEDA_RERANK_ROOT`` or ``SCHEDA_DEEP_ENDPOINT`` has to behave exactly like
 0.1.0 and say so, instead of guessing at a path.
 
-The checks run in a subprocess with every ``DSH_KB_*`` variable stripped, so the
+The checks run in a subprocess with every ``SCHEDA_*`` variable stripped, so the
 developer's own deployment configuration cannot make them pass.
 """
 
@@ -26,8 +26,8 @@ PROBE = r"""
 import json
 import sys
 
-import dsh_kb
-from dsh_kb import config
+import scheda
+from scheda import config
 from handrolled import deeprank, embed_onnx, rerank
 
 rag = config.RagConfig()
@@ -47,7 +47,7 @@ print(json.dumps({
 class TestOptionalLayersAreOff(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        env = {k: v for k, v in os.environ.items() if not k.startswith("DSH_KB_")}
+        env = {k: v for k, v in os.environ.items() if not k.startswith("SCHEDA_")}
         env["PYTHONPATH"] = str(SRC)
         result = subprocess.run(
             [sys.executable, "-c", PROBE],
@@ -58,7 +58,7 @@ class TestOptionalLayersAreOff(unittest.TestCase):
         cls.state = json.loads(result.stdout.strip().splitlines()[-1])
 
     def test_importing_the_package_pulls_in_no_heavy_third_party_code(self):
-        """`dsh_kb` has one dependency (handrolled, itself stdlib-only); it must
+        """`scheda` has one dependency (handrolled, itself stdlib-only); it must
         never drag in numpy/onnxruntime/tokenizers behind your back."""
         self.assertEqual(self.state["third_party"], [])
 

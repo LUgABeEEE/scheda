@@ -10,5 +10,5 @@ constants.
 import os
 
 #: Never let a test reach a local model by accident.
-os.environ.setdefault("DSH_KB_REWRITE", "off")
-os.environ.setdefault("DSH_KB_REWRITE_ENDPOINT", "http://127.0.0.1:1")
+os.environ.setdefault("SCHEDA_REWRITE", "off")
+os.environ.setdefault("SCHEDA_REWRITE_ENDPOINT", "http://127.0.0.1:1")

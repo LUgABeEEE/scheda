@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Local full-text index over the mirror (SQLite FTS5).
 
 Layout
@@ -214,7 +215,7 @@ SCHEMA_ABSENT = ""              # no index (or no meta table) at all
 #: a hand-edited file) and guessing a join would return wrong rows silently.
 _UNUSABLE_NOTE = (
     "index schema not recognised (meta table has neither `chunk_id` nor `id`) — "
-    "run `dsh-kb index` to rebuild it, or migrate an older index with "
+    "run `scheda index` to rebuild it, or migrate an older index with "
     "tools/migrate-cas.py"
 )
 
@@ -768,7 +769,7 @@ def search(
     result = SearchResult(query=query, zones=zones, index_age=index_age(cfg))
 
     if not cfg.index_db.exists():
-        result.note = "index missing — run `dsh-kb index`"
+        result.note = "index missing — run `scheda index`"
         return result
 
     tokens = query_tokens(query)
@@ -955,7 +956,7 @@ def search(
             hyde = None
             if weak and getattr(cfg.rag, "hyde_enabled", False):
                 import os as _os
-                if _os.environ.get("DSH_KB_HYDE_PROVIDER") in ("remote", "http"):
+                if _os.environ.get("SCHEDA_HYDE_PROVIDER") in ("remote", "http"):
                     from .ragvec import hyde_remote
                     hyde = hyde_remote(query)
                 else:
