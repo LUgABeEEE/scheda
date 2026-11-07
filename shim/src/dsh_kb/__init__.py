@@ -25,13 +25,30 @@ _SUBMODULES = (
     "cli", "config", "service", "index", "mirror", "sources", "mcp_server",
     "webui", "audit", "platform_fs", "skills", "expansion", "ragvec",
     "ragcheck", "supersede", "image_embed",
+    # 0.10.0 additions: a plugin author or an admin script may import these by
+    # the old name too.
+    "plugins", "auth",
 )
+
+#: Subpackages (``commands``) need their children mapped as well, otherwise
+#: ``from dsh_kb.commands.query import cmd_search`` fails even though the module
+#: itself exists under the new name.
+_SUBPACKAGES = ("commands",)
 
 for _name in _SUBMODULES:
     try:
         sys.modules[f"{__name__}.{_name}"] = importlib.import_module(f"scheda.{_name}")
     except ImportError:  # an optional module missing from this build
         pass
+
+for _pkg in _SUBPACKAGES:
+    try:
+        _module = importlib.import_module(f"scheda.{_pkg}")
+    except ImportError:
+        continue
+    sys.modules[f"{__name__}.{_pkg}"] = _module
+    for _name in getattr(_module, "__all__", []) or []:
+        sys.modules.setdefault(f"{__name__}.{_pkg}.{_name}", _module)
 
 
 def __getattr__(name: str):

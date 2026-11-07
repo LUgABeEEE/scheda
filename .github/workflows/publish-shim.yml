@@ -1,0 +1,72 @@
+name: Publish shim
+
+# The `dsh-kb` distribution is now a shim: it installs `scheda` and keeps
+# `import dsh_kb` (and every old submodule path) working. It lives in `shim/`
+# and is released only when it changes, so it gets its own tag prefix:
+#
+#     git tag -a shim-v0.10.0 -m "dsh-kb 0.10.0 (shim)" && git push --follow-tags
+#
+# Same authentication model as the core: Trusted Publishing (OIDC), no token in
+# the repository. PyPI needs a *publisher* on the existing `dsh-kb` project
+# pointing at this workflow name.
+on:
+  push:
+    tags: ["shim-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build and check the shim
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          set -eu
+          python -m pip install --quiet --upgrade build twine
+          python -m build --outdir dist shim
+          python -m twine check dist/*
+      - name: The shim must forward every old import path
+        run: |
+          set -eu
+          python -m venv /tmp/verify
+          /tmp/verify/bin/pip install --quiet dist/*.whl
+          /tmp/verify/bin/python -W ignore -c "
+          import dsh_kb
+          from dsh_kb.cli import main
+          from dsh_kb.config import Config
+          from dsh_kb.plugins import load
+          from dsh_kb.commands.query import cmd_search
+          assert dsh_kb.__version__ == __import__('scheda').__version__, dsh_kb.__version__
+          print('shim forwards:', dsh_kb.__version__)
+          "
+      - name: The old command still runs
+        run: |
+          /tmp/verify/bin/dsh-kb --version
+          /tmp/verify/bin/scheda --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-shim
+          path: dist/
+
+  publish:
+    name: upload
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-shim
+          path: dist/
+      - name: Upload to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
