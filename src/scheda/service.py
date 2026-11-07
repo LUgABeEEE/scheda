@@ -68,6 +68,9 @@ def _plugins(cfg: Config) -> plugins.Plugins:
     """
     if not getattr(cfg, "plugins_enabled", True):
         return plugins.EMPTY
+    # 插件拿不到 CLI 的 --home，把这次调用的 home 显式交出去，而不是让它去猜
+    # 环境变量（猜错的表现是"审计没转发"，而不是报错）。
+    plugins.set_current_home(cfg.home)
     return plugins.load()
 
 

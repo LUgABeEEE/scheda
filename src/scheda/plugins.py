@@ -61,6 +61,8 @@ import os
 import sys
 import threading
 from dataclasses import dataclass
+import contextvars
+from pathlib import Path
 from typing import Protocol
 
 #: The entry-point group.  Stable public name: rename it and every installed
@@ -151,6 +153,23 @@ _LOCK = threading.Lock()
 # --------------------------------------------------------------------------- #
 # Discovery
 # --------------------------------------------------------------------------- #
+#: 本次调用所属的 home。插件拿不到 CLI 的 ``--home``，而「同一个进程可能服务
+#: 多个 home」是真实存在的（测试、`--home` 切换、将来的多实例托管）。把这个事实
+#: 放进 contextvar，比让插件去猜环境变量可靠。
+CURRENT_HOME: contextvars.ContextVar = contextvars.ContextVar(
+    "scheda_plugin_home", default=None)
+
+
+def current_home():
+    """The home the current call belongs to, or ``None`` outside a request."""
+    return CURRENT_HOME.get()
+
+
+def set_current_home(home) -> None:
+    """Called by the core before it consults the extension point."""
+    CURRENT_HOME.set(Path(home) if home is not None else None)
+
+
 def disabled() -> bool:
     """True when ``SCHEDA_PLUGINS`` (or its pre-rename spelling) says "off"."""
     for name in (SWITCH_ENV, LEGACY_SWITCH_ENV):
