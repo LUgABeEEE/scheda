@@ -369,6 +369,28 @@ scheda mcp            # 在 stdin/stdout 上讲 JSON-RPC，暴露 search / read 
 
 ---
 
+## 扩展点与鉴权
+
+核心保持"一个人用"的简单；团队的需求通过三个钩子挂上去，而不是 fork
+（`scheda.plugins` entry-point group）：
+
+| 钩子 | 回答的问题 | 默认 |
+|---|---|---|
+| `AuthProvider.identify` | 这次调用是谁发起的 | `"local"` |
+| `AuditSink.emit` | 审计记录送去哪里（本地文件仍写） | 只写本地 |
+| `ZonePolicy.allow` | 这个路径能不能被镜像 / 索引 / 查询 | 内置分区策略 |
+
+插件抛异常只记一行 stderr 并跳过；没装插件时所有路径都是内置实现，
+`SCHEDA_PLUGINS=off` 完全关闭发现。写插件见 [docs/plugins.md](docs/plugins.md)，
+给团队用的商业实现见 [COMMERCIAL.md](COMMERCIAL.md)。
+
+**多用户登录内置，默认关闭。** `scheda web --auth` 需要 `<home>/users.json`，
+没有就**拒绝启动**——一个"以为自己有鉴权"的服务比一个起不来的服务更危险。
+角色有 `reader` / `writer` / `admin`，每个用户带 zone 白名单；会话存服务端，
+只保存 token 摘要。
+
+---
+
 ## 可选语义臂（默认关闭）
 
 上面讲的全是词法检索。在这之上还有一层**可选**能力：向量臂、cross-encoder、

@@ -385,6 +385,30 @@ returned as tool results — are in [docs/design.md](docs/design.md#agent-integr
 
 ---
 
+## Extension points and authentication
+
+The core stays one-person simple; a team's needs attach through three hooks
+instead of a fork (`scheda.plugins` entry-point group):
+
+| Hook | Question it answers | Default |
+|---|---|---|
+| `AuthProvider.identify` | who is asking | `"local"` |
+| `AuditSink.emit` | where audit records go (the local file is still written) | local only |
+| `ZonePolicy.allow` | may this path be mirrored / indexed / queried | the built-in zones |
+
+A plugin that raises is reported on stderr and skipped; with none installed every
+path is the built-in one, and `SCHEDA_PLUGINS=off` disables discovery entirely.
+Writing one: [docs/plugins.md](docs/plugins.md). The commercial layer that ships
+these implementations for teams: [COMMERCIAL.md](COMMERCIAL.md).
+
+**Multi-user login is built in and off by default.** `scheda web --auth` requires
+`<home>/users.json` and refuses to start without it — a service that believes it
+has authentication and does not is worse than one that will not start. Roles are
+`reader` / `writer` / `admin` with per-user zone allow-lists, and sessions are
+server-side, storing only token digests.
+
+---
+
 ## Optional semantic arm (off by default)
 
 Everything above is lexical. On top of it there is an **opt-in** layer that can
