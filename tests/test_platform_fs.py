@@ -19,6 +19,8 @@ What each test pins down:
 """
 from __future__ import annotations
 
+import os
+
 import sys
 import tempfile
 import unittest
@@ -108,6 +110,11 @@ def windows(api: object = None) -> WindowsStub:
     return WindowsStub(api)
 
 
+@unittest.skipIf(
+    os.name == "nt",
+    "POSIX mount semantics do not exist on Windows; the Windows branches "
+    "are covered by the stubbed classes below",
+)
 class PosixDelegationTests(unittest.TestCase):
     """1. Nothing about the POSIX answer may change except ``platform``."""
 

@@ -72,7 +72,10 @@ class TestHomeLocality(unittest.TestCase):
 
 class TestCommandNames(unittest.TestCase):
     def test_pyproject_installs_both_commands(self):
-        import tomllib
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python 3.10
+            self.skipTest("tomllib is 3.11+")
         root = Path(__file__).resolve().parents[1]
         scripts = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["scripts"]
         self.assertEqual(scripts["scheda"], "scheda.cli:main")

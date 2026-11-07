@@ -8,7 +8,10 @@
 from __future__ import annotations
 
 import sys
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10: the pyproject contract is checked on 3.11+
+    tomllib = None
 import unittest
 from pathlib import Path
 
@@ -19,6 +22,8 @@ SRC = REPO / "src"
 class TestPackagingContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if tomllib is None:
+            raise unittest.SkipTest("tomllib is 3.11+")
         cls.data = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
         cls.project = cls.data["project"]
 

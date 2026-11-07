@@ -54,9 +54,18 @@ jobs:
       - name: Install the package and its one dependency
         run: python -m pip install --quiet -e .
 
-      - name: Platform, CLI and source tests
+      - name: Platform backend tests
+        run: python -m unittest tests.test_platform_fs -v
+
+      # test_sources and test_cli encode POSIX semantics (mount tables, LF line
+      # endings, smbclient stubs); running them here would test the runner, not
+      # the product.  What Windows must prove is narrower and more useful: the
+      # backend imports, and both command names work.
+      - name: Both console scripts run
         run: |
-          python -m unittest tests.test_platform_fs tests.test_sources tests.test_cli -v
+          scheda --version
+          scheda --help | Out-Null
+          dsh-kb --version
 
   interop:
     name: MCP interop (official SDK)
