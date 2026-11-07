@@ -10,6 +10,7 @@ include CONTRIBUTING.md
 include SECURITY.md
 include COMMERCIAL.md
 include LICENSE
+include NOTICE
 include examples/config.json
 include examples/demo.sh
 recursive-include docs *.md

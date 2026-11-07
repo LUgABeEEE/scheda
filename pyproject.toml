@@ -8,7 +8,7 @@ description = "A personal Markdown knowledge base with a local mirror and index,
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "scheda contributors" }]
 keywords = ["knowledge-base", "markdown", "full-text-search", "sqlite-fts5", "ai-agents", "local-first", "webdav"]
 classifiers = [

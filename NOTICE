@@ -1,0 +1,31 @@
+Copyright (c) 2026 dsh-kb contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the GNU Affero General Public License for more details.
+
+Releases up to and including 0.6.0 were published under the MIT License and
+remain under it; that grant cannot be withdrawn.  From 0.8.0 the project is
+dual-licensed: AGPL-3.0-or-later (this file) or a commercial license
+(see COMMERCIAL.md).  Internal use inside one organization does not trigger any
+AGPL obligation.
+
+The full license text follows.
+
+This project is dual-licensed from 0.8.0: AGPL-3.0-or-later (see LICENSE) or a
+commercial license (see COMMERCIAL.md).
+
+The full AGPL-3.0 text is in LICENSE, verbatim, because that is what licence
+scanners read.  This file holds the provenance that would otherwise sit on top of
+it:
+
+  * 0.1.0 - 0.6.0  MIT (that grant cannot be withdrawn)
+  * 0.7.0          never published
+  * 0.8.0 and up   AGPL-3.0-or-later or commercial
+
+  * 0.9.0          renamed from dsh-kb to scheda

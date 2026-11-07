@@ -1,24 +1,3 @@
-Copyright (c) 2026 dsh-kb contributors
-
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU Affero General Public License as published by the Free
-Software Foundation, either version 3 of the License, or (at your option) any
-later version.
-
-This program is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU Affero General Public License for more details.
-
-Releases up to and including 0.6.0 were published under the MIT License and
-remain under it; that grant cannot be withdrawn.  From 0.8.0 the project is
-dual-licensed: AGPL-3.0-or-later (this file) or a commercial license
-(see COMMERCIAL.md).  Internal use inside one organization does not trigger any
-AGPL obligation.
-
-The full license text follows.
-
-================================================================================
-
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 
