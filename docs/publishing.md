@@ -51,7 +51,7 @@ gh run watch -R LUgABeEEE/scheda
 ## 4. 正式发布
 
 ```bash
-cd /data/agent/workspace/dsh-kb/release
+cd <scheda 仓库>
 
 # tag 要指向当前 HEAD（发布时重打，别用旧的）
 git -c user.name=LUgABeEEE -c user.email=LUgABeEEE@users.noreply.github.com \
